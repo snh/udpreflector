@@ -1,0 +1,346 @@
+package reflector
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"log/slog"
+	"net"
+	"net/netip"
+	"strconv"
+	"testing"
+	"time"
+
+	"udpreflector/internal/observability"
+)
+
+func TestServerForwardsPayloadToOtherIPv4Peers(t *testing.T) {
+	port := availableDualStackPort(t)
+	server := newTestServer(t, port, port, 4)
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	first := listenClient(t, "udp4", "127.0.0.1")
+	defer first.Close()
+	second := listenClient(t, "udp4", "127.0.0.1")
+	defer second.Close()
+	destination := netip.MustParseAddrPort("127.0.0.1:" + portString(port))
+
+	writePacket(t, first, destination, []byte("register first"))
+	payload := []byte{0x00, 0x01, 0xfe, 0xff, 0x42}
+	writePacket(t, second, destination, payload)
+	if received := readPacket(t, first); !bytes.Equal(received, payload) {
+		t.Fatalf("received payload = %v, want %v", received, payload)
+	}
+	assertNoPacket(t, second)
+}
+
+func TestServerFansOutToMultipleIPv4Peers(t *testing.T) {
+	port := availableDualStackPort(t)
+	server := newTestServer(t, port, port, 4)
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	first := listenClient(t, "udp4", "127.0.0.1")
+	defer first.Close()
+	second := listenClient(t, "udp4", "127.0.0.1")
+	defer second.Close()
+	third := listenClient(t, "udp4", "127.0.0.1")
+	defer third.Close()
+	destination := netip.MustParseAddrPort("127.0.0.1:" + portString(port))
+
+	writePacket(t, first, destination, []byte("register first"))
+	writePacket(t, second, destination, []byte("register second"))
+	readPacket(t, first)
+
+	payload := []byte("fan out")
+	writePacket(t, third, destination, payload)
+	if received := readPacket(t, first); !bytes.Equal(received, payload) {
+		t.Fatalf("first peer received %q, want %q", received, payload)
+	}
+	if received := readPacket(t, second); !bytes.Equal(received, payload) {
+		t.Fatalf("second peer received %q, want %q", received, payload)
+	}
+	assertNoPacket(t, third)
+}
+
+func TestServerForwardsBetweenAddressFamilies(t *testing.T) {
+	if !ipv6LoopbackAvailable() {
+		t.Skip("IPv6 loopback is unavailable")
+	}
+	port := availableDualStackPort(t)
+	server := newTestServer(t, port, port, 4)
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	ipv4Client := listenClient(t, "udp4", "127.0.0.1")
+	defer ipv4Client.Close()
+	ipv6Client := listenClient(t, "udp6", "::1")
+	defer ipv6Client.Close()
+	ipv4Destination := netip.MustParseAddrPort("127.0.0.1:" + portString(port))
+	ipv6Destination := netip.MustParseAddrPort("[::1]:" + portString(port))
+
+	writePacket(t, ipv4Client, ipv4Destination, []byte("register IPv4"))
+	fromIPv6 := []byte("from IPv6")
+	received, err := exchangeUntilReceived(ipv6Client, ipv6Destination, ipv4Client, fromIPv6)
+	if err != nil {
+		t.Fatalf("wait for IPv4 peer registration: %v", err)
+	}
+	if !bytes.Equal(received, fromIPv6) {
+		t.Fatalf("IPv4 client received %q, want %q", received, fromIPv6)
+	}
+
+	fromIPv4 := []byte("from IPv4")
+	writePacket(t, ipv4Client, ipv4Destination, fromIPv4)
+	if received := readPacket(t, ipv6Client); !bytes.Equal(received, fromIPv4) {
+		t.Fatalf("IPv6 client received %q, want %q", received, fromIPv4)
+	}
+}
+
+func TestServerDoesNotForwardRejectedPeerPacket(t *testing.T) {
+	port := availableDualStackPort(t)
+	server := newTestServer(t, port, port, 1)
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	registered := listenClient(t, "udp4", "127.0.0.1")
+	defer registered.Close()
+	rejected := listenClient(t, "udp4", "127.0.0.1")
+	defer rejected.Close()
+	destination := netip.MustParseAddrPort("127.0.0.1:" + portString(port))
+
+	writePacket(t, registered, destination, []byte("register"))
+	writePacket(t, rejected, destination, []byte("must be dropped"))
+	assertNoPacket(t, registered)
+	assertNoPacket(t, rejected)
+}
+
+func TestServerKeepsPortsIsolated(t *testing.T) {
+	portStart := availableConsecutiveDualStackPorts(t)
+	portEnd := portStart + 1
+	server := newTestServer(t, portStart, portEnd, 4)
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	firstPortClient := listenClient(t, "udp4", "127.0.0.1")
+	defer firstPortClient.Close()
+	secondPortClient := listenClient(t, "udp4", "127.0.0.1")
+	defer secondPortClient.Close()
+
+	writePacket(t, firstPortClient, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart)), []byte("register first port"))
+	writePacket(t, secondPortClient, netip.MustParseAddrPort("127.0.0.1:"+portString(portEnd)), []byte("second port packet"))
+	assertNoPacket(t, firstPortClient)
+}
+
+func TestServerRollsBackEarlierBindOnFailure(t *testing.T) {
+	port := availableDualStackPort(t)
+	occupied, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.ParseIP("::1"), Port: int(port)})
+	if err != nil {
+		t.Skipf("IPv6 loopback is unavailable: %v", err)
+	}
+	defer occupied.Close()
+
+	_, err = NewServer(testSettings(port, port, 4), observability.NewMetrics(), discardLogger())
+	if err == nil {
+		t.Fatal("NewServer() succeeded despite an occupied IPv6 port")
+	}
+
+	rebound, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: int(port)})
+	if err != nil {
+		t.Fatalf("IPv4 listener was not rolled back: %v", err)
+	}
+	rebound.Close()
+}
+
+func TestServerStopsGracefullyWhenCancelled(t *testing.T) {
+	port := availableDualStackPort(t)
+	server := newTestServer(t, port, port, 4)
+	cancel, result := runTestServer(server)
+	cancel()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("Run() returned an error during cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run() did not stop after cancellation")
+	}
+}
+
+func newTestServer(t *testing.T, portStart uint16, portEnd uint16, maximumPeers int) *Server {
+	t.Helper()
+	server, err := NewServer(testSettings(portStart, portEnd, maximumPeers), observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	return server
+}
+
+func testSettings(portStart uint16, portEnd uint16, maximumPeers int) Settings {
+	return Settings{
+		PortStart:       portStart,
+		PortEnd:         portEnd,
+		PeerTimeout:     time.Minute,
+		MaxPeersPerPort: maximumPeers,
+		UDP4Address:     netip.MustParseAddr("127.0.0.1"),
+		UDP6Address:     netip.MustParseAddr("::1"),
+	}
+}
+
+func runTestServer(server *Server) (context.CancelFunc, <-chan error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- server.Run(ctx)
+	}()
+	return cancel, result
+}
+
+func stopTestServer(t *testing.T, cancel context.CancelFunc, result <-chan error) {
+	t.Helper()
+	cancel()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Errorf("Run() returned an error during shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Error("Run() did not stop during shutdown")
+	}
+}
+
+func availableDualStackPort(t *testing.T) uint16 {
+	t.Helper()
+	for attempts := 0; attempts < 20; attempts++ {
+		candidate, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+		if err != nil {
+			t.Fatalf("find available UDP port: %v", err)
+		}
+		port := uint16(candidate.LocalAddr().(*net.UDPAddr).Port)
+		candidate.Close()
+		probe4, err4 := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: int(port)})
+		if err4 != nil {
+			continue
+		}
+		probe6, err6 := net.ListenUDP("udp6", &net.UDPAddr{IP: net.ParseIP("::1"), Port: int(port)})
+		probe4.Close()
+		if err6 == nil {
+			probe6.Close()
+			return port
+		}
+	}
+	t.Fatal("could not find an available dual-stack UDP port")
+	return 0
+}
+
+func availableConsecutiveDualStackPorts(t *testing.T) uint16 {
+	t.Helper()
+	for candidate := uint16(30000); candidate < 60000; candidate += 2 {
+		connections := make([]*net.UDPConn, 0, 4)
+		available := true
+		for _, port := range []uint16{candidate, candidate + 1} {
+			for _, listen := range []struct {
+				network string
+				address string
+			}{{"udp4", "127.0.0.1"}, {"udp6", "::1"}} {
+				connection, err := net.ListenUDP(listen.network, &net.UDPAddr{IP: net.ParseIP(listen.address), Port: int(port)})
+				if err != nil {
+					available = false
+					break
+				}
+				connections = append(connections, connection)
+			}
+			if !available {
+				break
+			}
+		}
+		for _, connection := range connections {
+			connection.Close()
+		}
+		if available {
+			return candidate
+		}
+	}
+	t.Fatal("could not find consecutive dual-stack UDP ports")
+	return 0
+}
+
+func listenClient(t *testing.T, network string, address string) *net.UDPConn {
+	t.Helper()
+	connection, err := net.ListenUDP(network, &net.UDPAddr{IP: net.ParseIP(address)})
+	if err != nil {
+		t.Fatalf("listen with %s client: %v", network, err)
+	}
+	return connection
+}
+
+func writePacket(t *testing.T, connection *net.UDPConn, destination netip.AddrPort, payload []byte) {
+	t.Helper()
+	if _, err := connection.WriteToUDPAddrPort(payload, destination); err != nil {
+		t.Fatalf("write UDP packet: %v", err)
+	}
+}
+
+func readPacket(t *testing.T, connection *net.UDPConn) []byte {
+	t.Helper()
+	if err := connection.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	buffer := make([]byte, maximumUDPPacketSize)
+	read, _, err := connection.ReadFromUDPAddrPort(buffer)
+	if err != nil {
+		t.Fatalf("read UDP packet: %v", err)
+	}
+	return buffer[:read]
+}
+
+func exchangeUntilReceived(sender *net.UDPConn, destination netip.AddrPort, recipient *net.UDPConn, payload []byte) ([]byte, error) {
+	buffer := make([]byte, maximumUDPPacketSize)
+	for attempts := 0; attempts < 10; attempts++ {
+		if _, err := sender.WriteToUDPAddrPort(payload, destination); err != nil {
+			return nil, err
+		}
+		if err := recipient.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			return nil, err
+		}
+		read, _, err := recipient.ReadFromUDPAddrPort(buffer)
+		if err == nil {
+			return buffer[:read], nil
+		}
+		if netError, ok := err.(net.Error); !ok || !netError.Timeout() {
+			return nil, err
+		}
+	}
+	return nil, context.DeadlineExceeded
+}
+
+func assertNoPacket(t *testing.T, connection *net.UDPConn) {
+	t.Helper()
+	if err := connection.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	buffer := make([]byte, 1)
+	if _, _, err := connection.ReadFromUDPAddrPort(buffer); err == nil {
+		t.Fatal("sender unexpectedly received its own packet")
+	} else if netError, ok := err.(net.Error); !ok || !netError.Timeout() {
+		t.Fatalf("checking for sender echo: %v", err)
+	}
+}
+
+func ipv6LoopbackAvailable() bool {
+	connection, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.ParseIP("::1")})
+	if err != nil {
+		return false
+	}
+	connection.Close()
+	return true
+}
+
+func portString(port uint16) string {
+	return strconv.FormatUint(uint64(port), 10)
+}
+
+func discardLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}

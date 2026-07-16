@@ -1,0 +1,49 @@
+.TH UDPREFLECTOR 1 "July 17, 2026" "udpreflector" "User Commands"
+.SH NAME
+udpreflector \- relay UDP packets between recently active endpoints
+.SH SYNOPSIS
+.B udpreflector
+.BI --port-start= port
+.BI --port-end= port
+.RI [ options ]
+.SH DESCRIPTION
+.B udpreflector
+listens on an inclusive range of IPv4 and IPv6 UDP ports, learns remote
+endpoints from received packets, and forwards each accepted packet unchanged
+to the other recently active endpoints on the same logical port.
+.PP
+Configuration is supplied through command-line options and remains fixed for
+the lifetime of the process.
+.SH OPTIONS
+.TP
+.B --version
+Print the build identifier and exit without opening listeners.
+.TP
+.BI --port-start= port
+First UDP port in the required inclusive range.
+.TP
+.BI --port-end= port
+Last UDP port in the required inclusive range.
+.TP
+.BI --peer-timeout= duration
+Peer inactivity timeout. The default is 1m.
+.TP
+.BI --max-peers-per-port= count
+Maximum active peers per logical UDP port. The default is 256.
+.TP
+.BI --udp4-address= address
+IPv4 listening address. The default is 0.0.0.0.
+.TP
+.BI --udp6-address= address
+IPv6 listening address. The default is ::.
+.TP
+.BI --metrics-address= host:port
+Enable Prometheus metrics on this HTTP listening address. Metrics are disabled
+when this option is omitted.
+.SH FILES
+.TP
+.I /usr/lib/systemd/system/udpreflector.service
+Example hardened systemd service using UDP ports 40000 through 40100.
+.SH SEE ALSO
+.BR systemctl (1),
+.BR systemd.service (5)

@@ -1,0 +1,2 @@
+# The Go executable is intentionally static so one package runs across supported Debian releases.
+udpreflector: statically-linked-binary [usr/bin/udpreflector]
