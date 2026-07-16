@@ -37,6 +37,34 @@ func TestExecutePrintsVersionWithoutConfiguration(t *testing.T) {
 	}
 }
 
+func TestExecutePrintsHelpWithoutConfiguration(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "long help flag", args: []string{"--help"}},
+		{name: "short help flag", args: []string{"-h"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			exitCode := execute(context.Background(), test.args, &stdout, &stderr)
+
+			if exitCode != 0 {
+				t.Fatalf("execute() exit code = %d, want 0", exitCode)
+			}
+			if !strings.Contains(stdout.String(), "Usage: udpreflector [flags]") {
+				t.Fatalf("stdout does not contain usage text: %q", stdout.String())
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty output", stderr.String())
+			}
+		})
+	}
+}
+
 func TestExecuteReportsStartupFailure(t *testing.T) {
 	occupied, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {

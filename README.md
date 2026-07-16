@@ -39,6 +39,8 @@ The service listens on all IPv4 and IPv6 interfaces by default. Prometheus metri
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
+| `--help` | off | Show command usage and exit |
+| `--version` | off | Show build identifier and exit |
 | `--port-start` | required | First UDP port in the inclusive range |
 | `--port-end` | required | Last UDP port in the inclusive range |
 | `--peer-timeout` | `1m` | Inactivity period before a peer expires |
