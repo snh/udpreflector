@@ -58,8 +58,10 @@ trap 'rm -rf "$package_root"' EXIT HUP INT TERM
 chmod 0755 "$package_root"
 
 install -Dm0755 "$binary" "$package_root/usr/bin/udpreflector"
-install -Dm0644 "$repository_root/contrib/systemd/udpreflector.service" \
-	"$package_root/usr/lib/systemd/system/udpreflector.service"
+install -Dm0644 "$repository_root/contrib/systemd/udpreflector@.service" \
+	"$package_root/usr/lib/systemd/system/udpreflector@.service"
+install -Dm0644 "$repository_root/contrib/systemd/example.conf" \
+	"$package_root/usr/share/doc/udpreflector/examples/udpreflector.conf"
 install -Dm0644 "$repository_root/README.md" \
 	"$package_root/usr/share/doc/udpreflector/README.md"
 install -Dm0644 "$repository_root/LICENSE" \
@@ -69,6 +71,7 @@ install -Dm0644 "$script_directory/udpreflector.1" \
 gzip -9n "$package_root/usr/share/man/man1/udpreflector.1"
 install -Dm0644 "$script_directory/lintian-overrides" \
 	"$package_root/usr/share/lintian/overrides/udpreflector"
+install -d -m0755 "$package_root/etc/udpreflector"
 install -d -m0755 "$package_root/DEBIAN"
 install -m0755 "$script_directory/postinst" "$package_root/DEBIAN/postinst"
 install -m0755 "$script_directory/postrm" "$package_root/DEBIAN/postrm"
@@ -82,7 +85,7 @@ udpreflector ($package_version) unstable; urgency=medium
 EOF
 gzip -9n "$package_root/usr/share/doc/udpreflector/changelog.Debian"
 
-installed_size=$(du -sk "$package_root/usr" | awk '{ total += $1 } END { print total }')
+installed_size=$(du -sk "$package_root/usr" "$package_root/etc" | awk '{ total += $1 } END { print total }')
 cat >"$package_root/DEBIAN/control" <<EOF
 Package: udpreflector
 Version: $package_version
@@ -98,7 +101,7 @@ EOF
 
 (
 	cd "$package_root"
-	find usr -type f -print | LC_ALL=C sort | xargs md5sum
+	find etc usr -type f -print | LC_ALL=C sort | xargs md5sum
 ) >"$package_root/DEBIAN/md5sums"
 
 package="$output_directory/udpreflector_${package_version}_${architecture}.deb"

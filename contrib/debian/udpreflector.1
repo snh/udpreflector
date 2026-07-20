@@ -48,8 +48,12 @@ Enable Prometheus metrics on this HTTP listening address. Metrics are disabled
 when this option is omitted.
 .SH FILES
 .TP
-.I /usr/lib/systemd/system/udpreflector.service
-Example hardened systemd service using UDP ports 40000 through 40100.
+.I /usr/lib/systemd/system/udpreflector@.service
+Hardened systemd template for running named reflector instances.
+.TP
+.I /etc/udpreflector/INSTANCE.conf
+Command-line arguments for the named systemd instance, assigned to the
+UDPREFLECTOR_ARGS environment variable.
 .SH SEE ALSO
 .BR systemctl (1),
 .BR systemd.service (5)

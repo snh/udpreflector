@@ -1,11 +1,12 @@
 [Unit]
-Description=UDP reflector
+Description=UDP reflector instance %I
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/udpreflector --port-range=40000-40100 --metrics-address=127.0.0.1:9090
+EnvironmentFile=/etc/udpreflector/%i.conf
+ExecStart=/usr/bin/udpreflector $UDPREFLECTOR_ARGS
 DynamicUser=yes
 Restart=on-failure
 RestartSec=2s

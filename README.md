@@ -111,20 +111,43 @@ make debian-packages
 
 This creates `dist/udpreflector_<build-identifier>_amd64.deb` and `dist/udpreflector_<build-identifier>_arm64.deb`. Building packages requires `dpkg-deb`; on Debian and Ubuntu it is provided by the `dpkg` package.
 
-Each package installs the binary at `/usr/bin/udpreflector`, the systemd unit at `/usr/lib/systemd/system/udpreflector.service`, the manual page, README, and licence. The service is not enabled automatically; review its port range and metrics setting before enabling it.
+Each package installs the binary at `/usr/bin/udpreflector`, the `udpreflector@.service` systemd template, an example configuration under `/usr/share/doc/udpreflector/examples`, the manual page, README, and licence. It also prepares `/etc/udpreflector` for per-instance configuration. No instance is enabled automatically.
 
 ## systemd
 
-The example in [`contrib/systemd/udpreflector.service`](contrib/systemd/udpreflector.service) uses dynamic credentials, an unprivileged example range, no Linux capabilities, and filesystem and process hardening suitable for a stateless network service.
+The template at [`contrib/systemd/udpreflector@.service`](contrib/systemd/udpreflector@.service) runs multiple independent reflector instances on one host. Each instance reads its command-line arguments from `/etc/udpreflector/<instance>.conf`; the instance name is the text after `@` in the unit name. It uses dynamic credentials, grants no Linux capabilities, and applies filesystem and process hardening suitable for a stateless network service.
 
-Install the binary and unit, review the port range, then enable it:
+Install the binary and template, then create the configuration directory:
 
 ```sh
-sudo install -m 0755 dist/udpreflector /usr/bin/udpreflector
-sudo install -m 0644 contrib/systemd/udpreflector.service /etc/systemd/system/udpreflector.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now udpreflector.service
+sudo install -Dm0755 dist/udpreflector /usr/bin/udpreflector
+sudo install -Dm0644 contrib/systemd/udpreflector@.service \
+  /etc/systemd/system/udpreflector@.service
+sudo install -d -m0755 /etc/udpreflector
 ```
+
+Create one configuration file per reflector. Use `--option=value` form and keep the entire `UDPREFLECTOR_ARGS` value quoted. Instances sharing a bind address must use non-overlapping UDP port ranges and distinct metrics listener addresses:
+
+```ini
+# /etc/udpreflector/primary.conf
+UDPREFLECTOR_ARGS="--port-range=40000-40100 --metrics-address=127.0.0.1:9090"
+```
+
+```ini
+# /etc/udpreflector/secondary.conf
+UDPREFLECTOR_ARGS="--port-range=40200-40300 --metrics-address=127.0.0.1:9091"
+```
+
+Reload systemd and enable both named instances:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now udpreflector@primary udpreflector@secondary
+systemctl status udpreflector@primary
+journalctl -u udpreflector@primary -f
+```
+
+Configuration changes take effect after restarting the corresponding instance with `sudo systemctl restart udpreflector@primary`.
 
 Ports below 1024 require `CAP_NET_BIND_SERVICE`. Add that capability only when a privileged range is genuinely required. The example deliberately grants no capabilities.
 

@@ -107,7 +107,9 @@ jobs:
           test "$(dpkg-deb --field "$PACKAGE" Package)" = udpreflector
           test "$(dpkg-deb --field "$PACKAGE" Architecture)" = "${{ matrix.goarch }}"
           dpkg-deb --contents "$PACKAGE" | grep -F './usr/bin/udpreflector' >/dev/null
-          dpkg-deb --contents "$PACKAGE" | grep -F './usr/lib/systemd/system/udpreflector.service' >/dev/null
+          dpkg-deb --contents "$PACKAGE" | grep -F './usr/lib/systemd/system/udpreflector@.service' >/dev/null
+          dpkg-deb --contents "$PACKAGE" | grep -F './usr/share/doc/udpreflector/examples/udpreflector.conf' >/dev/null
+          dpkg-deb --contents "$PACKAGE" | grep -F './etc/udpreflector/' >/dev/null
 
       - name: Upload binary
         uses: actions/upload-artifact@v7
