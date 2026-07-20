@@ -3,6 +3,7 @@ package application
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -14,7 +15,7 @@ import (
 	"udpreflector/internal/config"
 )
 
-func TestRunServesMetricsOnlyAndStopsCleanly(t *testing.T) {
+func TestRunServesPeerAPIAndMetricsOnOneListener(t *testing.T) {
 	configuration := testConfiguration(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
@@ -22,14 +23,36 @@ func TestRunServesMetricsOnlyAndStopsCleanly(t *testing.T) {
 		result <- Run(ctx, configuration, discardLogger())
 	}()
 
-	metricsURL := "http://" + configuration.MetricsAddress + "/metrics"
+	metricsURL := "http://" + configuration.HTTPAddress + "/metrics"
 	response := waitForHTTP(t, metricsURL)
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("metrics status = %d, want 200", response.StatusCode)
 	}
 	response.Body.Close()
 
-	response, err := http.Get("http://" + configuration.MetricsAddress + "/")
+	peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatalf("listen as peer: %v", err)
+	}
+	defer peer.Close()
+	destination := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), configuration.PortRange.Start)
+	if _, err := peer.WriteToUDPAddrPort([]byte("register peer"), destination); err != nil {
+		t.Fatalf("register peer: %v", err)
+	}
+
+	peersURL := "http://" + configuration.HTTPAddress + "/peers"
+	reflectorPeers := waitForReflectorPeers(t, peersURL, 1)
+	if reflectorPeers[0].ReflectorPort != configuration.PortRange.Start {
+		t.Fatalf("peer reflector port = %d, want %d", reflectorPeers[0].ReflectorPort, configuration.PortRange.Start)
+	}
+	if reflectorPeers[0].Peers[0].Endpoint != peer.LocalAddr().(*net.UDPAddr).AddrPort().String() {
+		t.Fatalf("peer endpoint = %s, want %s", reflectorPeers[0].Peers[0].Endpoint, peer.LocalAddr())
+	}
+	if reflectorPeers[0].Peers[0].Hub {
+		t.Fatal("mesh peer was reported as a hub")
+	}
+
+	response, err = http.Get("http://" + configuration.HTTPAddress + "/")
 	if err != nil {
 		t.Fatalf("request root endpoint: %v", err)
 	}
@@ -49,9 +72,9 @@ func TestRunServesMetricsOnlyAndStopsCleanly(t *testing.T) {
 	}
 }
 
-func TestRunWithoutMetricsStopsCleanly(t *testing.T) {
+func TestRunWithoutHTTPStopsCleanly(t *testing.T) {
 	configuration := testConfiguration(t)
-	configuration.MetricsAddress = ""
+	configuration.HTTPAddress = ""
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
@@ -71,7 +94,7 @@ func TestRunWithoutMetricsStopsCleanly(t *testing.T) {
 
 func TestRunForwardsSpokePacketToConfiguredHub(t *testing.T) {
 	configuration := testConfiguration(t)
-	configuration.MetricsAddress = ""
+	configuration.HTTPAddress = ""
 	hub, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatalf("listen as hub: %v", err)
@@ -112,7 +135,7 @@ func TestRunForwardsSpokePacketToConfiguredHub(t *testing.T) {
 	}
 }
 
-func TestRunReleasesMetricsListenerWhenUDPBindFails(t *testing.T) {
+func TestRunReleasesHTTPListenerWhenUDPBindFails(t *testing.T) {
 	configuration := testConfiguration(t)
 	occupied, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.ParseIP("::1"), Port: int(configuration.PortRange.Start)})
 	if err != nil {
@@ -125,9 +148,9 @@ func TestRunReleasesMetricsListenerWhenUDPBindFails(t *testing.T) {
 		t.Fatal("Run() succeeded despite an occupied UDP port")
 	}
 
-	rebound, err := net.Listen("tcp", configuration.MetricsAddress)
+	rebound, err := net.Listen("tcp", configuration.HTTPAddress)
 	if err != nil {
-		t.Fatalf("metrics listener was not released after startup failure: %v", err)
+		t.Fatalf("HTTP listener was not released after startup failure: %v", err)
 	}
 	rebound.Close()
 }
@@ -152,7 +175,7 @@ func testConfiguration(t *testing.T) config.Config {
 		MaxPeersPerPort: 4,
 		UDP4Address:     netip.MustParseAddr("127.0.0.1"),
 		UDP6Address:     netip.MustParseAddr("::1"),
-		MetricsAddress:  availableTCPAddress(t),
+		HTTPAddress:     availableTCPAddress(t),
 	}
 }
 
@@ -204,6 +227,28 @@ func waitForHTTP(t *testing.T, address string) *http.Response {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("HTTP endpoint %s did not become available", address)
+	return nil
+}
+
+func waitForReflectorPeers(t *testing.T, address string, peerCount int) []reflectorPeersResponse {
+	t.Helper()
+	client := &http.Client{Timeout: 100 * time.Millisecond}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		response, err := client.Get(address)
+		if err != nil {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		var reflectorPeers []reflectorPeersResponse
+		decodeErr := json.NewDecoder(response.Body).Decode(&reflectorPeers)
+		response.Body.Close()
+		if response.StatusCode == http.StatusOK && decodeErr == nil && len(reflectorPeers) == 1 && len(reflectorPeers[0].Peers) == peerCount {
+			return reflectorPeers
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("peer API %s did not report %d peers", address, peerCount)
 	return nil
 }
 

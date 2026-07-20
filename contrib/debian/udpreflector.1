@@ -46,9 +46,10 @@ IPv4 listening address. The default is 0.0.0.0.
 .BI --udp6-address= address
 IPv6 listening address. The default is ::.
 .TP
-.BI --metrics-address= host:port
-Enable Prometheus metrics on this HTTP listening address. Metrics are disabled
-when this option is omitted.
+.BI --http-address= host:port
+Enable the peer API and Prometheus metrics on one HTTP listening address. The
+listener serves /peers and /metrics. Both are disabled when this option is
+omitted.
 .SH FILES
 .TP
 .I /usr/lib/systemd/system/udpreflector@.service

@@ -31,7 +31,7 @@ type Config struct {
 	MaxPeersPerPort int
 	UDP4Address     netip.Addr
 	UDP6Address     netip.Addr
-	MetricsAddress  string
+	HTTPAddress     string
 }
 
 type rawConfig struct {
@@ -41,7 +41,7 @@ type rawConfig struct {
 	maxPeersPerPort int
 	udp4Address     string
 	udp6Address     string
-	metricsAddress  string
+	httpAddress     string
 }
 
 func newFlagSet(output io.Writer) (*flag.FlagSet, *rawConfig) {
@@ -55,7 +55,7 @@ func newFlagSet(output io.Writer) (*flag.FlagSet, *rawConfig) {
 	flags.IntVar(&raw.maxPeersPerPort, "max-peers-per-port", defaultMaxPeers, "maximum active peers per UDP port")
 	flags.StringVar(&raw.udp4Address, "udp4-address", defaultUDP4Address, "IPv4 address to listen on")
 	flags.StringVar(&raw.udp6Address, "udp6-address", defaultUDP6Address, "IPv6 address to listen on")
-	flags.StringVar(&raw.metricsAddress, "metrics-address", "", "Prometheus HTTP listen address (disabled when omitted)")
+	flags.StringVar(&raw.httpAddress, "http-address", "", "metrics and peer API HTTP listen address (disabled when omitted)")
 
 	return flags, raw
 }
@@ -115,9 +115,9 @@ func Parse(args []string) (Config, error) {
 	if err != nil || !udp6Address.Is6() || udp6Address.Is4In6() {
 		return Config{}, fmt.Errorf("--udp6-address must be an IPv6 address: %q", raw.udp6Address)
 	}
-	if provided["metrics-address"] {
-		if err := validateListenAddress(raw.metricsAddress); err != nil {
-			return Config{}, fmt.Errorf("invalid --metrics-address: %w", err)
+	if provided["http-address"] {
+		if err := validateListenAddress(raw.httpAddress); err != nil {
+			return Config{}, fmt.Errorf("invalid --http-address: %w", err)
 		}
 	}
 
@@ -128,7 +128,7 @@ func Parse(args []string) (Config, error) {
 		MaxPeersPerPort: raw.maxPeersPerPort,
 		UDP4Address:     udp4Address,
 		UDP6Address:     udp6Address,
-		MetricsAddress:  raw.metricsAddress,
+		HTTPAddress:     raw.httpAddress,
 	}, nil
 }
 

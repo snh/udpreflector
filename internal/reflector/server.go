@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
 
@@ -27,6 +28,17 @@ type Settings struct {
 	MaxPeersPerPort int
 	UDP4Address     netip.Addr
 	UDP6Address     netip.Addr
+}
+
+type Peer struct {
+	Endpoint netip.AddrPort
+	LastSeen time.Time
+	Hub      bool
+}
+
+type ReflectorPeers struct {
+	ReflectorPort uint16
+	Peers         []Peer
 }
 
 type Server struct {
@@ -165,6 +177,29 @@ func (server *Server) Run(ctx context.Context) error {
 	server.closeListeners()
 	workers.Wait()
 	return runError
+}
+
+func (server *Server) ReflectorPeers() []ReflectorPeers {
+	now := time.Now()
+	reflectorPeers := make([]ReflectorPeers, 0, len(server.relays))
+	for _, relay := range server.relays {
+		snapshot, expired := relay.registry.snapshot(now)
+		server.metrics.SetActivePeers(relay.port, len(snapshot))
+		server.logExpiredPeers(relay, expired, len(snapshot))
+		peers := make([]Peer, 0, len(snapshot))
+		for _, peer := range snapshot {
+			peers = append(peers, Peer{
+				Endpoint: peer.endpoint,
+				LastSeen: peer.lastSeen,
+				Hub:      relay.registry.isDynamicHubPeer(peer.endpoint),
+			})
+		}
+		sort.Slice(peers, func(first, second int) bool {
+			return peers[first].Endpoint.String() < peers[second].Endpoint.String()
+		})
+		reflectorPeers = append(reflectorPeers, ReflectorPeers{ReflectorPort: relay.port, Peers: peers})
+	}
+	return reflectorPeers
 }
 
 func (server *Server) receive(ctx context.Context, listener *udpListener) error {

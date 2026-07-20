@@ -76,7 +76,7 @@ func TestExecutePrintsHelpWithoutConfiguration(t *testing.T) {
 func TestExecuteReportsStartupFailure(t *testing.T) {
 	occupied, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
-		t.Fatalf("occupy metrics address: %v", err)
+		t.Fatalf("occupy HTTP address: %v", err)
 	}
 	defer occupied.Close()
 
@@ -85,7 +85,7 @@ func TestExecuteReportsStartupFailure(t *testing.T) {
 		"--port-range=40000-40000",
 		"--udp4-address=127.0.0.1",
 		"--udp6-address=::1",
-		"--metrics-address=" + occupied.Addr().String(),
+		"--http-address=" + occupied.Addr().String(),
 	}, io.Discard, &stderr)
 
 	if exitCode != 1 {

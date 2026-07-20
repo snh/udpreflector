@@ -132,6 +132,35 @@ func TestServerKeepsPortsIsolated(t *testing.T) {
 	assertNoPacket(t, firstPortClient)
 }
 
+func TestServerListsReflectorPeersByPortAndEndpoint(t *testing.T) {
+	portStart := availableConsecutiveDualStackPorts(t)
+	server := newTestServer(t, portStart, portStart+1, 4)
+	t.Cleanup(server.closeListeners)
+	server.relays[0].registry.hubEndpoint = netip.MustParseAddrPort("192.0.2.2:0")
+	now := time.Now()
+	server.relays[0].registry.admit(netip.MustParseAddrPort("192.0.2.2:2000"), now)
+	server.relays[0].registry.admit(netip.MustParseAddrPort("192.0.2.1:1000"), now)
+	server.relays[1].registry.admit(netip.MustParseAddrPort("[2001:db8::1]:3000"), now)
+
+	reflectorPeers := server.ReflectorPeers()
+
+	if len(reflectorPeers) != 2 {
+		t.Fatalf("ReflectorPeers() returned %d entries, want 2", len(reflectorPeers))
+	}
+	if reflectorPeers[0].ReflectorPort != portStart || reflectorPeers[1].ReflectorPort != portStart+1 {
+		t.Fatalf("reflector ports = (%d, %d), want (%d, %d)", reflectorPeers[0].ReflectorPort, reflectorPeers[1].ReflectorPort, portStart, portStart+1)
+	}
+	if len(reflectorPeers[0].Peers) != 2 || reflectorPeers[0].Peers[0].Endpoint.String() != "192.0.2.1:1000" || reflectorPeers[0].Peers[0].Hub {
+		t.Fatalf("first reflector peers = %+v, want sorted spoke then hub", reflectorPeers[0].Peers)
+	}
+	if reflectorPeers[0].Peers[1].Endpoint.String() != "192.0.2.2:2000" || !reflectorPeers[0].Peers[1].Hub {
+		t.Fatalf("second peer = %+v, want dynamic hub", reflectorPeers[0].Peers[1])
+	}
+	if len(reflectorPeers[1].Peers) != 1 || reflectorPeers[1].Peers[0].Endpoint.String() != "[2001:db8::1]:3000" || reflectorPeers[1].Peers[0].Hub {
+		t.Fatalf("second reflector peers = %+v, want one spoke", reflectorPeers[1].Peers)
+	}
+}
+
 func TestServerMapsConsecutivePortsToHubEndpoints(t *testing.T) {
 	portBlock := availableConsecutiveDualStackPortBlock(t, 4)
 	portStart := portBlock

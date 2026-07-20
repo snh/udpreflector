@@ -22,6 +22,11 @@ type admission struct {
 	active     int
 }
 
+type peerSnapshot struct {
+	endpoint netip.AddrPort
+	lastSeen time.Time
+}
+
 func newPeerRegistry(timeout time.Duration, maxPeers int, hubEndpoint netip.AddrPort) *peerRegistry {
 	return &peerRegistry{
 		timeout:     timeout,
@@ -138,6 +143,18 @@ func (registry *peerRegistry) expire(now time.Time) (expired []netip.AddrPort, a
 
 	expired = registry.pruneLocked(now)
 	return expired, len(registry.peers)
+}
+
+func (registry *peerRegistry) snapshot(now time.Time) (peers []peerSnapshot, expired []netip.AddrPort) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+
+	expired = registry.pruneLocked(now)
+	peers = make([]peerSnapshot, 0, len(registry.peers))
+	for endpoint, lastSeen := range registry.peers {
+		peers = append(peers, peerSnapshot{endpoint: endpoint, lastSeen: lastSeen})
+	}
+	return peers, expired
 }
 
 func (registry *peerRegistry) pruneLocked(now time.Time) []netip.AddrPort {

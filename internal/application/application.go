@@ -23,12 +23,12 @@ type componentResult struct {
 
 func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) error {
 	metrics := observability.NewMetrics()
-	var metricsListener net.Listener
-	if configuration.MetricsAddress != "" {
+	var httpListener net.Listener
+	if configuration.HTTPAddress != "" {
 		var err error
-		metricsListener, err = net.Listen("tcp", configuration.MetricsAddress)
+		httpListener, err = net.Listen("tcp", configuration.HTTPAddress)
 		if err != nil {
-			return fmt.Errorf("listen for Prometheus metrics on %s: %w", configuration.MetricsAddress, err)
+			return fmt.Errorf("listen for HTTP API and metrics on %s: %w", configuration.HTTPAddress, err)
 		}
 	}
 
@@ -44,8 +44,8 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 		UDP6Address:     configuration.UDP6Address,
 	}, metrics, logger)
 	if err != nil {
-		if metricsListener != nil {
-			metricsListener.Close()
+		if httpListener != nil {
+			httpListener.Close()
 		}
 		return err
 	}
@@ -59,20 +59,21 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 	}()
 
 	var httpServer *http.Server
-	if metricsListener != nil {
+	if httpListener != nil {
 		mux := http.NewServeMux()
 		mux.Handle("GET /metrics", metrics.Handler())
+		mux.Handle("GET /peers", newPeersHandler(server))
 		httpServer = &http.Server{
 			Handler:           mux,
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		componentCount++
 		go func() {
-			err := httpServer.Serve(metricsListener)
+			err := httpServer.Serve(httpListener)
 			if errors.Is(err, http.ErrServerClosed) {
 				err = nil
 			}
-			results <- componentResult{name: "metrics server", err: err}
+			results <- componentResult{name: "HTTP server", err: err}
 		}()
 	}
 
@@ -91,8 +92,8 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 		"max_peers_per_port", configuration.MaxPeersPerPort,
 		"udp4_address", configuration.UDP4Address,
 		"udp6_address", configuration.UDP6Address,
-		"metrics_enabled", metricsListener != nil,
-		"metrics_address", configuration.MetricsAddress,
+		"http_enabled", httpListener != nil,
+		"http_address", configuration.HTTPAddress,
 	)
 
 	var runError error
@@ -109,7 +110,7 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 		shutdownContext, stopShutdown := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer stopShutdown()
 		if err := httpServer.Shutdown(shutdownContext); err != nil && runError == nil {
-			runError = fmt.Errorf("shut down metrics server: %w", err)
+			runError = fmt.Errorf("shut down HTTP server: %w", err)
 		}
 	}
 	for completed < componentCount {

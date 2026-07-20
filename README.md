@@ -16,7 +16,7 @@ Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from 
 - An IP-only hub must send a packet before spokes can reach its source endpoint. It counts towards the peer limit and active-peer metric, and expires after the configured inactivity timeout. One peer-capacity slot is reserved for matching hub endpoints.
 - An explicit hub base port corresponds to the first listening port. Later listening ports map to hub ports at the same offset, and mappings above UDP port 65535 are rejected at startup.
 - Packets are forwarded as independent UDP datagrams without transformation. UDP delivery, ordering, and uniqueness are not guaranteed.
-- Startup is atomic. If any requested IPv4 socket, IPv6 socket, or configured metrics listener cannot bind, the process closes all listeners and exits.
+- Startup is atomic. If any requested IPv4 socket, IPv6 socket, or configured HTTP listener cannot bind, the process closes all listeners and exits.
 - Both address families must be available. The service does not silently fall back to partial coverage.
 
 The peer cap bounds memory and per-packet fan-out, but this remains a UDP reflection service. Source addresses can be spoofed on networks that do not apply ingress filtering. Restrict access with host or network firewalls and deploy only on networks where reflection traffic is intended.
@@ -34,10 +34,10 @@ make build
 
 Build identifiers use the UTC build date and seven-character Git commit ID, for example `20260717-a1b2c3d`. Local builds with uncommitted changes append `-dirty`; an ordinary `go build` reports `dev`.
 
-The service listens on all IPv4 and IPv6 interfaces by default. Prometheus metrics are disabled unless `--metrics-address` is specified:
+The service listens on all IPv4 and IPv6 interfaces by default. The HTTP API and Prometheus metrics are disabled unless `--http-address` is specified:
 
 ```sh
-./dist/udpreflector --port-range=40000-40100 --metrics-address=127.0.0.1:9090
+./dist/udpreflector --port-range=40000-40100 --http-address=127.0.0.1:9090
 ```
 
 To learn hub source endpoints dynamically by IP address, omit the port:
@@ -68,13 +68,34 @@ Literal IPv6 addresses without a port may be bare or bracketed. An explicit IPv6
 | `--max-peers-per-port` | `256` | Maximum active peers on each logical port |
 | `--udp4-address` | `0.0.0.0` | IPv4 listening address |
 | `--udp6-address` | `::` | IPv6 listening address |
-| `--metrics-address` | disabled | Prometheus HTTP listening address |
+| `--http-address` | disabled | Peer API and Prometheus HTTP listening address |
 
-When enabled, only `/metrics` is served by the HTTP listener. Keep it on loopback unless remote scraping is required and protected.
+When enabled, the single HTTP listener serves both `/peers` and `/metrics`; neither endpoint can be enabled separately. Keep it on loopback unless remote access is required and protected, because the peer API exposes source addresses and ports.
+
+## Peer API
+
+`GET /peers` returns every configured reflector port with its currently active peers. Results are ordered by reflector port and endpoint. `hub` is true for a dynamically learned peer matching the configured IP-only hub; an explicitly configured hub is not included because it is not a learned peer.
+
+```json
+[
+  {
+    "reflector_port": 40000,
+    "peers": [
+      {
+        "endpoint": "192.0.2.1:12345",
+        "last_seen": "2026-07-20T12:34:56Z",
+        "hub": false
+      }
+    ]
+  }
+]
+```
+
+The response uses `Cache-Control: no-store`. A configured port with no active peers has an empty `peers` array.
 
 ## Prometheus metrics
 
-Pass `--metrics-address` to enable standard Go and process collectors together with:
+Pass `--http-address` to enable the HTTP listener and standard Go and process collectors together with:
 
 - `udp_reflector_packets_received_total`
 - `udp_reflector_bytes_received_total`
@@ -90,7 +111,7 @@ Metric labels contain only the configured listening port, address family, and co
 
 ## Docker
 
-The image contains a static binary and runs as numeric user `65532`. Publish every selected UDP port for both address families as supported by the container runtime. Metrics must bind beyond container loopback when they are published.
+The image contains a static binary and runs as numeric user `65532`. Publish every selected UDP port for both address families as supported by the container runtime. HTTP must bind beyond container loopback when it is published.
 
 ```sh
 docker build -t udpreflector .
@@ -99,10 +120,10 @@ docker run --rm \
   -p 127.0.0.1:9090:9090/tcp \
   udpreflector \
   --port-range=40000-40010 \
-  --metrics-address=0.0.0.0:9090
+  --http-address=0.0.0.0:9090
 ```
 
-The Dockerfile exposes only the conventional optional metrics TCP port because the UDP range is selected at runtime. `EXPOSE` does not enable metrics, publish ports, or replace explicit `-p` options.
+The Dockerfile exposes only the conventional optional HTTP TCP port because the UDP range is selected at runtime. `EXPOSE` does not enable HTTP, publish ports, or replace explicit `-p` options.
 
 ## Debian packages
 
@@ -129,16 +150,16 @@ sudo install -Dm0644 contrib/systemd/udpreflector@.service \
 sudo install -d -m0755 /etc/udpreflector
 ```
 
-Create one configuration file per reflector. Use `--option=value` form and keep the entire `UDPREFLECTOR_ARGS` value quoted. Instances sharing a bind address must use non-overlapping UDP port ranges and distinct metrics listener addresses:
+Create one configuration file per reflector. Use `--option=value` form and keep the entire `UDPREFLECTOR_ARGS` value quoted. Instances sharing a bind address must use non-overlapping UDP port ranges and distinct HTTP listener addresses:
 
 ```ini
 # /etc/udpreflector/primary.conf
-UDPREFLECTOR_ARGS="--port-range=40000-40100 --metrics-address=127.0.0.1:9090"
+UDPREFLECTOR_ARGS="--port-range=40000-40100 --http-address=127.0.0.1:9090"
 ```
 
 ```ini
 # /etc/udpreflector/secondary.conf
-UDPREFLECTOR_ARGS="--port-range=40200-40300 --metrics-address=127.0.0.1:9091"
+UDPREFLECTOR_ARGS="--port-range=40200-40300 --http-address=127.0.0.1:9091"
 ```
 
 Reload systemd and enable both named instances:
@@ -156,7 +177,7 @@ Ports below 1024 require `CAP_NET_BIND_SERVICE`. Add that capability only when a
 
 ## Capacity planning
 
-The process opens two UDP sockets per configured port, plus one TCP listener when metrics are enabled. Allow at least $2n$ file descriptors for $n$ UDP ports, or $2n + 1$ with metrics, with additional headroom for the runtime and HTTP connections. The systemd example allows 4096 descriptors.
+The process opens two UDP sockets per configured port, plus one TCP listener when HTTP is enabled. Allow at least $2n$ file descriptors for $n$ UDP ports, or $2n + 1$ with HTTP, with additional headroom for the runtime and HTTP connections. The systemd example allows 4096 descriptors.
 
 In mesh mode, each packet can fan out to every other active peer. In hub-and-spoke mode, spoke packets can fan out to active hub endpoints and hub packets can fan out to every active spoke. An explicitly ported hub does not consume peer capacity and receives traffic without registering first; dynamically learned hub endpoints consume capacity and must remain active.
 

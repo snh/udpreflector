@@ -72,6 +72,24 @@ func TestRegistryExpiresPeerAtTimeout(t *testing.T) {
 	}
 }
 
+func TestRegistrySnapshotListsOnlyActivePeers(t *testing.T) {
+	registry := newPeerRegistry(time.Minute, 2, netip.AddrPort{})
+	started := time.Unix(100, 0)
+	activeEndpoint := endpoint("192.0.2.2:1000")
+	registry.admit(endpoint("192.0.2.1:1000"), started)
+	registry.admit(activeEndpoint, started.Add(30*time.Second))
+
+	peers, expired := registry.snapshot(started.Add(time.Minute))
+
+	assertRecipients(t, expired, endpoint("192.0.2.1:1000"))
+	if len(peers) != 1 {
+		t.Fatalf("snapshot peers = %v, want one active peer", peers)
+	}
+	if peers[0].endpoint != activeEndpoint || !peers[0].lastSeen.Equal(started.Add(30*time.Second)) {
+		t.Fatalf("snapshot peer = %+v, want %s last seen at %s", peers[0], activeEndpoint, started.Add(30*time.Second))
+	}
+}
+
 func TestRegistryRejectsNewPeerAtCapacity(t *testing.T) {
 	registry := newPeerRegistry(time.Minute, 2, netip.AddrPort{})
 	now := time.Unix(100, 0)
