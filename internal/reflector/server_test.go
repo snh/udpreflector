@@ -302,6 +302,81 @@ func TestServerStopsGracefullyWhenCancelled(t *testing.T) {
 	}
 }
 
+func TestServerLogsPeerJoiningAndExpiring(t *testing.T) {
+	port := availableDualStackPort(t)
+	settings := testSettings(port, port, 4)
+	settings.PeerTimeout = 20 * time.Millisecond
+	logs := make(chan logEntry, 2)
+	server, err := NewServer(settings, observability.NewMetrics(), slog.New(logHandler{logs: logs}))
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	client := listenClient(t, "udp4", "127.0.0.1")
+	defer client.Close()
+	writePacket(t, client, netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port), []byte("join"))
+
+	joined := waitForLog(t, logs)
+	if joined.message != "Peer joined" {
+		t.Fatalf("first log message = %q, want peer joined", joined.message)
+	}
+	if joined.attributes["peer"] != client.LocalAddr().String() || joined.attributes["port"] != portString(port) || joined.attributes["active_peers"] != "1" {
+		t.Fatalf("peer joined attributes = %v", joined.attributes)
+	}
+
+	expired := waitForLog(t, logs)
+	if expired.message != "Peer expired" {
+		t.Fatalf("second log message = %q, want peer expired", expired.message)
+	}
+	if expired.attributes["peer"] != client.LocalAddr().String() || expired.attributes["port"] != portString(port) || expired.attributes["active_peers"] != "0" {
+		t.Fatalf("peer expired attributes = %v", expired.attributes)
+	}
+}
+
+type logEntry struct {
+	message    string
+	attributes map[string]string
+}
+
+type logHandler struct {
+	logs chan<- logEntry
+}
+
+func (handler logHandler) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (handler logHandler) Handle(_ context.Context, record slog.Record) error {
+	entry := logEntry{message: record.Message, attributes: make(map[string]string)}
+	record.Attrs(func(attribute slog.Attr) bool {
+		entry.attributes[attribute.Key] = attribute.Value.String()
+		return true
+	})
+	handler.logs <- entry
+	return nil
+}
+
+func (handler logHandler) WithAttrs([]slog.Attr) slog.Handler {
+	return handler
+}
+
+func (handler logHandler) WithGroup(string) slog.Handler {
+	return handler
+}
+
+func waitForLog(t *testing.T, logs <-chan logEntry) logEntry {
+	t.Helper()
+	select {
+	case entry := <-logs:
+		return entry
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for log entry")
+		return logEntry{}
+	}
+}
+
 func newTestServer(t *testing.T, portStart uint16, portEnd uint16, maximumPeers int) *Server {
 	t.Helper()
 	server, err := NewServer(testSettings(portStart, portEnd, maximumPeers), observability.NewMetrics(), discardLogger())

@@ -13,6 +13,9 @@ func TestRegistryFirstPeerHasNoRecipients(t *testing.T) {
 	if !result.accepted {
 		t.Fatal("first peer was rejected")
 	}
+	if !result.joined {
+		t.Fatal("first peer was not reported as joined")
+	}
 	if len(result.recipients) != 0 {
 		t.Fatalf("first peer received %d recipients, want 0", len(result.recipients))
 	}
@@ -44,12 +47,15 @@ func TestRegistryRefreshExtendsPeerLifetime(t *testing.T) {
 	second := endpoint("192.0.2.2:1000")
 
 	registry.admit(first, started)
-	registry.admit(first, started.Add(30*time.Second))
+	refreshed := registry.admit(first, started.Add(30*time.Second))
+	if refreshed.joined {
+		t.Fatal("existing peer refresh was reported as joined")
+	}
 	result := registry.admit(second, started.Add(61*time.Second))
 
 	assertRecipients(t, result.recipients, first)
-	if result.expired != 0 {
-		t.Fatalf("expired peers = %d, want 0", result.expired)
+	if len(result.expired) != 0 {
+		t.Fatalf("expired peers = %v, want none", result.expired)
 	}
 }
 
@@ -60,8 +66,9 @@ func TestRegistryExpiresPeerAtTimeout(t *testing.T) {
 
 	expired, active := registry.expire(started.Add(time.Minute))
 
-	if expired != 1 || active != 0 {
-		t.Fatalf("expire() = (%d, %d), want (1, 0)", expired, active)
+	assertRecipients(t, expired, endpoint("192.0.2.1:1000"))
+	if active != 0 {
+		t.Fatalf("active peers = %d, want 0", active)
 	}
 }
 
@@ -102,8 +109,9 @@ func TestRegistryExpiryFreesCapacity(t *testing.T) {
 	if !result.accepted {
 		t.Fatal("new peer was rejected after expiry freed capacity")
 	}
-	if result.expired != 1 || result.active != 1 {
-		t.Fatalf("admission expiry state = (%d, %d), want (1, 1)", result.expired, result.active)
+	assertRecipients(t, result.expired, endpoint("192.0.2.1:1000"))
+	if result.active != 1 {
+		t.Fatalf("active peers = %d, want 1", result.active)
 	}
 }
 
@@ -204,8 +212,9 @@ func TestRegistryExpiresSpokesBeforeHubFanOut(t *testing.T) {
 	result := registry.admit(hub, started.Add(time.Minute))
 
 	assertRecipients(t, result.recipients)
-	if result.expired != 1 || result.active != 0 {
-		t.Fatalf("hub admission expiry state = (%d, %d), want (1, 0)", result.expired, result.active)
+	assertRecipients(t, result.expired, endpoint("192.0.2.1:1000"))
+	if result.active != 0 {
+		t.Fatalf("active peers = %d, want 0", result.active)
 	}
 }
 

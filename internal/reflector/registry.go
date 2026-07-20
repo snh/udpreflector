@@ -16,8 +16,9 @@ type peerRegistry struct {
 
 type admission struct {
 	accepted   bool
+	joined     bool
 	recipients []netip.AddrPort
-	expired    int
+	expired    []netip.AddrPort
 	active     int
 }
 
@@ -48,7 +49,8 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 			active:     len(registry.peers),
 		}
 	}
-	if _, known := registry.peers[sender]; !known && len(registry.peers) >= registry.maxPeers {
+	_, known := registry.peers[sender]
+	if !known && len(registry.peers) >= registry.maxPeers {
 		return admission{expired: expired, active: len(registry.peers)}
 	}
 
@@ -56,6 +58,7 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 	if registry.hubEndpoint.IsValid() {
 		return admission{
 			accepted:   true,
+			joined:     !known,
 			recipients: []netip.AddrPort{registry.hubEndpoint},
 			expired:    expired,
 			active:     len(registry.peers),
@@ -70,13 +73,14 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 
 	return admission{
 		accepted:   true,
+		joined:     !known,
 		recipients: recipients,
 		expired:    expired,
 		active:     len(registry.peers),
 	}
 }
 
-func (registry *peerRegistry) expire(now time.Time) (expired int, active int) {
+func (registry *peerRegistry) expire(now time.Time) (expired []netip.AddrPort, active int) {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
 
@@ -84,12 +88,12 @@ func (registry *peerRegistry) expire(now time.Time) (expired int, active int) {
 	return expired, len(registry.peers)
 }
 
-func (registry *peerRegistry) pruneLocked(now time.Time) int {
-	expired := 0
+func (registry *peerRegistry) pruneLocked(now time.Time) []netip.AddrPort {
+	var expired []netip.AddrPort
 	for peer, lastSeen := range registry.peers {
 		if !lastSeen.Add(registry.timeout).After(now) {
 			delete(registry.peers, peer)
-			expired++
+			expired = append(expired, peer)
 		}
 	}
 	return expired
