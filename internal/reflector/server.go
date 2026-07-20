@@ -182,13 +182,17 @@ func (server *Server) receive(ctx context.Context, listener *udpListener) error 
 		server.metrics.RecordReceived(listener.port, listener.family, read)
 		admission := listener.relay.registry.admit(sender, time.Now())
 		server.metrics.SetActivePeers(listener.port, admission.active)
-		server.logExpiredPeers(listener.port, admission.expired, admission.active)
+		server.logExpiredPeers(listener.relay, admission.expired, admission.active)
 		if !admission.accepted {
 			server.metrics.RecordDrop(listener.port, listener.family, "peer_capacity")
 			continue
 		}
 		if admission.joined {
-			server.logger.Info("Peer joined", "peer", sender.String(), "port", listener.port, "active_peers", admission.active)
+			hub := 0
+			if listener.relay.registry.isDynamicHubPeer(sender) {
+				hub = 1
+			}
+			server.logger.Info("Peer joined", "peer", sender.String(), "hub", hub, "port", listener.port, "active_peers", admission.active)
 		}
 
 		payload := buffer[:read]
@@ -215,15 +219,19 @@ func (server *Server) cleanExpired(ctx context.Context) {
 			for _, relay := range server.relays {
 				expired, active := relay.registry.expire(now)
 				server.metrics.SetActivePeers(relay.port, active)
-				server.logExpiredPeers(relay.port, expired, active)
+				server.logExpiredPeers(relay, expired, active)
 			}
 		}
 	}
 }
 
-func (server *Server) logExpiredPeers(port uint16, peers []netip.AddrPort, active int) {
+func (server *Server) logExpiredPeers(relay *portRelay, peers []netip.AddrPort, active int) {
 	for _, peer := range peers {
-		server.logger.Info("Peer expired", "peer", peer.String(), "port", port, "active_peers", active)
+		hub := 0
+		if relay.registry.isDynamicHubPeer(peer) {
+			hub = 1
+		}
+		server.logger.Info("Peer expired", "peer", peer.String(), "hub", hub, "port", relay.port, "active_peers", active)
 	}
 }
 

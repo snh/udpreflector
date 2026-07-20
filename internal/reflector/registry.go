@@ -111,6 +111,10 @@ func (registry *peerRegistry) hasDynamicHub() bool {
 	return registry.hubEndpoint.IsValid() && registry.hubEndpoint.Port() == 0
 }
 
+func (registry *peerRegistry) isDynamicHubPeer(peer netip.AddrPort) bool {
+	return registry.hasDynamicHub() && canonicalAddrPort(peer).Addr() == registry.hubEndpoint.Addr()
+}
+
 func (registry *peerRegistry) atCapacity(sender netip.AddrPort) bool {
 	if len(registry.peers) >= registry.maxPeers {
 		return true
