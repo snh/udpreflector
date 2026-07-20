@@ -177,6 +177,21 @@ func TestRegistryHubForwardsToAllSpokes(t *testing.T) {
 	}
 }
 
+func TestRegistryTracksStaticHubActivity(t *testing.T) {
+	hub := endpoint("192.0.2.100:30000")
+	registry := newPeerRegistry(time.Minute, 2, hub)
+	firstSeen := time.Unix(100, 0)
+	lastSeen := firstSeen.Add(30 * time.Second)
+
+	registry.admit(hub, firstSeen)
+	registry.admit(hub, lastSeen)
+	snapshot, ok := registry.staticHubSnapshot()
+
+	if !ok || snapshot.endpoint != hub || !snapshot.lastSeen.Equal(lastSeen) {
+		t.Fatalf("static hub snapshot = %+v, %t, want %s last seen at %s", snapshot, ok, hub, lastSeen)
+	}
+}
+
 func TestRegistryHubRemainsAcceptedAtSpokeCapacity(t *testing.T) {
 	hub := endpoint("192.0.2.100:30000")
 	registry := newPeerRegistry(time.Minute, 1, hub)

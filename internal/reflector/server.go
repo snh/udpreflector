@@ -184,10 +184,11 @@ func (server *Server) ReflectorPeers() []ReflectorPeers {
 	reflectorPeers := make([]ReflectorPeers, 0, len(server.relays))
 	for _, relay := range server.relays {
 		snapshot, expired := relay.registry.snapshot(now)
+		staticHub, hasStaticHub := relay.registry.staticHubSnapshot()
 		server.metrics.SetActivePeers(relay.port, len(snapshot))
 		server.logExpiredPeers(relay, expired, len(snapshot))
 		peerCapacity := len(snapshot)
-		if relay.registry.hasStaticHub() {
+		if hasStaticHub {
 			peerCapacity++
 		}
 		peers := make([]Peer, 0, peerCapacity)
@@ -198,8 +199,8 @@ func (server *Server) ReflectorPeers() []ReflectorPeers {
 				Hub:      relay.registry.isDynamicHubPeer(peer.endpoint),
 			})
 		}
-		if relay.registry.hasStaticHub() {
-			peers = append(peers, Peer{Endpoint: relay.registry.hubEndpoint, Hub: true})
+		if hasStaticHub {
+			peers = append(peers, Peer{Endpoint: staticHub.endpoint, LastSeen: staticHub.lastSeen, Hub: true})
 		}
 		sort.Slice(peers, func(first, second int) bool {
 			return peers[first].Endpoint.String() < peers[second].Endpoint.String()

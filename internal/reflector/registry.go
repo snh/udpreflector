@@ -11,6 +11,7 @@ type peerRegistry struct {
 	timeout     time.Duration
 	maxPeers    int
 	hubEndpoint netip.AddrPort
+	hubLastSeen time.Time
 	peers       map[netip.AddrPort]time.Time
 }
 
@@ -43,6 +44,7 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 	sender = canonicalAddrPort(sender)
 	expired := registry.pruneLocked(now)
 	if registry.hasStaticHub() && sender == registry.hubEndpoint {
+		registry.hubLastSeen = now
 		recipients := make([]netip.AddrPort, 0, len(registry.peers))
 		for peer := range registry.peers {
 			recipients = append(recipients, peer)
@@ -155,6 +157,16 @@ func (registry *peerRegistry) snapshot(now time.Time) (peers []peerSnapshot, exp
 		peers = append(peers, peerSnapshot{endpoint: endpoint, lastSeen: lastSeen})
 	}
 	return peers, expired
+}
+
+func (registry *peerRegistry) staticHubSnapshot() (peerSnapshot, bool) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+
+	if !registry.hasStaticHub() {
+		return peerSnapshot{}, false
+	}
+	return peerSnapshot{endpoint: registry.hubEndpoint, lastSeen: registry.hubLastSeen}, true
 }
 
 func (registry *peerRegistry) pruneLocked(now time.Time) []netip.AddrPort {

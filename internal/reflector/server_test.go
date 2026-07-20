@@ -172,6 +172,11 @@ func TestServerListsMappedStaticHubForEachPort(t *testing.T) {
 		t.Fatalf("NewServer(): %v", err)
 	}
 	t.Cleanup(server.closeListeners)
+	lastSeen := []time.Time{time.Unix(100, 0), time.Unix(200, 0)}
+	for index, relay := range server.relays {
+		hubEndpoint := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), hubPortStart+uint16(index))
+		relay.registry.admit(hubEndpoint, lastSeen[index])
+	}
 
 	reflectorPeers := server.ReflectorPeers()
 
@@ -184,8 +189,8 @@ func TestServerListsMappedStaticHubForEachPort(t *testing.T) {
 		}
 		hub := reflector.Peers[0]
 		wantEndpoint := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), hubPortStart+uint16(index))
-		if hub.Endpoint != wantEndpoint || !hub.Hub || !hub.LastSeen.IsZero() {
-			t.Fatalf("reflector %d peer = %+v, want static hub %s with no last-seen time", reflector.ReflectorPort, hub, wantEndpoint)
+		if hub.Endpoint != wantEndpoint || !hub.Hub || !hub.LastSeen.Equal(lastSeen[index]) {
+			t.Fatalf("reflector %d peer = %+v, want static hub %s last seen at %s", reflector.ReflectorPort, hub, wantEndpoint, lastSeen[index])
 		}
 	}
 }

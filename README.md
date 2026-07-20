@@ -74,7 +74,7 @@ When enabled, the single HTTP listener serves both `/peers` and `/metrics`; neit
 
 ## Peer API
 
-`GET /peers` returns every configured reflector port with its currently active peers. Results are ordered by reflector port and endpoint. `hub` is true for a dynamically learned peer matching the configured IP-only hub; an explicitly configured hub is not included because it is not a learned peer.
+`GET /peers` returns every configured reflector port with its currently active learned peers and any explicitly configured hub. Results are ordered by reflector port and endpoint. `hub` is true for a dynamically learned peer matching the configured IP-only hub or for an explicitly configured hub. For an explicit hub, `last_seen` records its latest accepted packet and is the zero timestamp until the hub sends one.
 
 ```json
 [
@@ -91,7 +91,7 @@ When enabled, the single HTTP listener serves both `/peers` and `/metrics`; neit
 ]
 ```
 
-The response uses `Cache-Control: no-store`. A configured port with no active peers has an empty `peers` array.
+The response uses `Cache-Control: no-store`. A configured port without an explicit hub and with no active peers has an empty `peers` array.
 
 ## Prometheus metrics
 
