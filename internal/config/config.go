@@ -34,19 +34,20 @@ type Config struct {
 	MetricsAddress  string
 }
 
-func Parse(args []string) (Config, error) {
-	flags := flag.NewFlagSet("udpreflector", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
+type rawConfig struct {
+	portRange       string
+	hubEndpoint     string
+	peerTimeout     time.Duration
+	maxPeersPerPort int
+	udp4Address     string
+	udp6Address     string
+	metricsAddress  string
+}
 
-	var raw struct {
-		portRange       string
-		hubEndpoint     string
-		peerTimeout     time.Duration
-		maxPeersPerPort int
-		udp4Address     string
-		udp6Address     string
-		metricsAddress  string
-	}
+func newFlagSet(output io.Writer) (*flag.FlagSet, *rawConfig) {
+	flags := flag.NewFlagSet("udpreflector", flag.ContinueOnError)
+	flags.SetOutput(output)
+	raw := new(rawConfig)
 
 	flags.StringVar(&raw.portRange, "port-range", "", "inclusive UDP port range (START-END)")
 	flags.StringVar(&raw.hubEndpoint, "hub-endpoint", "", "hub IP and optional base port")
@@ -55,6 +56,17 @@ func Parse(args []string) (Config, error) {
 	flags.StringVar(&raw.udp4Address, "udp4-address", defaultUDP4Address, "IPv4 address to listen on")
 	flags.StringVar(&raw.udp6Address, "udp6-address", defaultUDP6Address, "IPv6 address to listen on")
 	flags.StringVar(&raw.metricsAddress, "metrics-address", "", "Prometheus HTTP listen address (disabled when omitted)")
+
+	return flags, raw
+}
+
+func PrintDefaults(output io.Writer) {
+	flags, _ := newFlagSet(output)
+	flags.PrintDefaults()
+}
+
+func Parse(args []string) (Config, error) {
+	flags, raw := newFlagSet(io.Discard)
 
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err

@@ -57,14 +57,10 @@ func printHelp(stdout io.Writer) {
 Reflect UDP packets to other recent peers on each configured UDP port.
 
 Flags:
-	--help                    Show this help and exit
-	--version                 Show build identifier and exit
-	--port-start uint         First UDP port in the inclusive range (required)
-	--port-end uint           Last UDP port in the inclusive range (required)
-	--peer-timeout duration   Inactivity timeout before a peer expires (default 1m)
-	--max-peers-per-port int  Maximum active peers on each logical port (default 256)
-	--udp4-address string     IPv4 listening address (default 0.0.0.0)
-	--udp6-address string     IPv6 listening address (default ::)
-	--metrics-address string  Prometheus HTTP listening address (disabled when omitted)
+  -help
+        show this help and exit
+  -version
+        show build identifier and exit
 `)
+	config.PrintDefaults(stdout)
 }
