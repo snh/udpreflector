@@ -38,7 +38,7 @@ limit. An explicit IPv6 port requires [IPv6]:port syntax. Mappings above port
 Peer inactivity timeout. The default is 1m.
 .TP
 .BI --max-peers-per-port= count
-Maximum active peers per logical UDP port. The default is 256.
+Maximum active learned peers per logical port. The default is 256.
 .TP
 .BI --udp4-address= address
 IPv4 listening address. The default is 0.0.0.0.
@@ -47,7 +47,7 @@ IPv4 listening address. The default is 0.0.0.0.
 IPv6 listening address. The default is ::.
 .TP
 .BI --http-address= host:port
-Enable the peer API and Prometheus metrics on one HTTP listening address. The
+Enable the peer API and metrics on one HTTP listening address. The
 listener serves /peers and /metrics. Both are disabled when this option is
 omitted.
 .SH FILES

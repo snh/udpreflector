@@ -63,6 +63,14 @@ func TestExecutePrintsHelpWithoutConfiguration(t *testing.T) {
 					t.Errorf("stdout does not contain current flag %q: %q", flagName, stdout.String())
 				}
 			}
+			for _, description := range []string{
+				"maximum active learned peers per logical port",
+				"peer API and metrics HTTP listen address",
+			} {
+				if !strings.Contains(stdout.String(), description) {
+					t.Errorf("stdout does not contain flag description %q: %q", description, stdout.String())
+				}
+			}
 			if strings.Contains(stdout.String(), "port-start") || strings.Contains(stdout.String(), "port-end") {
 				t.Errorf("stdout contains obsolete port flags: %q", stdout.String())
 			}

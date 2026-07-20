@@ -10,7 +10,7 @@ Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from 
 
 - `--port-range` is required; there is no implicit UDP port range.
 - Peer activity expires after 60 seconds by default. Every accepted packet refreshes its sender.
-- Each logical port accepts at most 256 active peers by default.
+- Each logical port accepts at most 256 active learned peers by default.
 - A packet from a new peer at capacity is dropped without being forwarded. Existing peers remain admitted until they expire.
 - In hub-and-spoke mode, a hub with an explicit port is always accepted and only dynamically learned peers count towards the peer limit and active-peer metric.
 - An IP-only hub must send a packet before spokes can reach its source endpoint. It counts towards the peer limit and active-peer metric, and expires after the configured inactivity timeout. One peer-capacity slot is reserved for matching hub endpoints.
@@ -65,10 +65,10 @@ Literal IPv6 addresses without a port may be bare or bracketed. An explicit IPv6
 | `--port-range` | required | Inclusive UDP listening range in `START-END` form |
 | `--hub-endpoint` | disabled | Hub IP and optional base port for hub-and-spoke routing |
 | `--peer-timeout` | `1m` | Inactivity period before a peer expires |
-| `--max-peers-per-port` | `256` | Maximum active peers on each logical port |
+| `--max-peers-per-port` | `256` | Maximum active learned peers per logical port |
 | `--udp4-address` | `0.0.0.0` | IPv4 listening address |
 | `--udp6-address` | `::` | IPv6 listening address |
-| `--http-address` | disabled | Peer API and Prometheus HTTP listening address |
+| `--http-address` | disabled | Peer API and metrics HTTP listen address |
 
 When enabled, the single HTTP listener serves both `/peers` and `/metrics`; neither endpoint can be enabled separately. Keep it on loopback unless remote access is required and protected, because the peer API exposes source addresses and ports.
 
