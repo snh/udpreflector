@@ -1,16 +1,17 @@
-.TH UDPREFLECTOR 1 "July 17, 2026" "udpreflector" "User Commands"
+.TH UDPREFLECTOR 1 "July 20, 2026" "udpreflector" "User Commands"
 .SH NAME
 udpreflector \- relay UDP packets between recently active endpoints
 .SH SYNOPSIS
 .B udpreflector
-.BI --port-start= port
-.BI --port-end= port
+.BI --port-range= start-end
 .RI [ options ]
 .SH DESCRIPTION
 .B udpreflector
 listens on an inclusive range of IPv4 and IPv6 UDP ports, learns remote
 endpoints from received packets, and forwards each accepted packet unchanged
-to the other recently active endpoints on the same logical port.
+to the other recently active endpoints on the same logical port. An optional
+hub-and-spoke mode sends learned peers only to a configured hub and sends hub
+packets to all active peers on the corresponding logical port.
 .PP
 Configuration is supplied through command-line options and remains fixed for
 the lifetime of the process.
@@ -19,11 +20,16 @@ the lifetime of the process.
 .B --version
 Print the build identifier and exit without opening listeners.
 .TP
-.BI --port-start= port
-First UDP port in the required inclusive range.
+.BI --port-range= start-end
+Required inclusive UDP listening range. Both ports must be between 1 and 65535,
+and the start must not be greater than the end.
 .TP
-.BI --port-end= port
-Last UDP port in the required inclusive range.
+.BI --hub-endpoint= IP[:port]
+Enable hub-and-spoke routing to a literal IPv4 or IPv6 address. When the port is
+omitted, it defaults to the start of the listening range. The resolved port is
+the hub base port: each later listening port maps to a hub port at the same
+offset. An explicit IPv6 port requires [IPv6]:port syntax. The hub does not
+expire or count towards the peer limit. Mappings above port 65535 are rejected.
 .TP
 .BI --peer-timeout= duration
 Peer inactivity timeout. The default is 1m.

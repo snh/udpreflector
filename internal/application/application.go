@@ -33,8 +33,11 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 	}
 
 	server, err := reflector.NewServer(reflector.Settings{
-		PortStart:       configuration.PortStart,
-		PortEnd:         configuration.PortEnd,
+		PortRange: reflector.PortRange{
+			Start: configuration.PortRange.Start,
+			End:   configuration.PortRange.End,
+		},
+		HubEndpoint:     configuration.HubEndpoint,
 		PeerTimeout:     configuration.PeerTimeout,
 		MaxPeersPerPort: configuration.MaxPeersPerPort,
 		UDP4Address:     configuration.UDP4Address,
@@ -73,9 +76,13 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 		}()
 	}
 
+	hubEndpoint := ""
+	if configuration.HubEndpoint.IsValid() {
+		hubEndpoint = configuration.HubEndpoint.String()
+	}
 	logger.Info("UDP reflector started",
-		"port_start", configuration.PortStart,
-		"port_end", configuration.PortEnd,
+		"port_range", fmt.Sprintf("%d-%d", configuration.PortRange.Start, configuration.PortRange.End),
+		"hub_endpoint", hubEndpoint,
 		"peer_timeout", configuration.PeerTimeout,
 		"max_peers_per_port", configuration.MaxPeersPerPort,
 		"udp4_address", configuration.UDP4Address,

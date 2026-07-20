@@ -132,6 +132,140 @@ func TestServerKeepsPortsIsolated(t *testing.T) {
 	assertNoPacket(t, firstPortClient)
 }
 
+func TestServerMapsConsecutivePortsToHubEndpoints(t *testing.T) {
+	portBlock := availableConsecutiveDualStackPortBlock(t, 4)
+	portStart := portBlock
+	hubPortStart := portBlock + 2
+	settings := testSettings(portStart, portStart+1, 4)
+	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), hubPortStart)
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	firstHub := listenClientOnPort(t, "udp4", "127.0.0.1", hubPortStart)
+	defer firstHub.Close()
+	secondHub := listenClientOnPort(t, "udp4", "127.0.0.1", hubPortStart+1)
+	defer secondHub.Close()
+	firstSpoke := listenClient(t, "udp4", "127.0.0.1")
+	defer firstSpoke.Close()
+	secondSpoke := listenClient(t, "udp4", "127.0.0.1")
+	defer secondSpoke.Close()
+	firstDestination := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), portStart)
+	secondDestination := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), portStart+1)
+
+	firstPayload := []byte("first mapped port")
+	writePacket(t, firstSpoke, firstDestination, firstPayload)
+	if received := readPacket(t, firstHub); !bytes.Equal(received, firstPayload) {
+		t.Fatalf("first hub received %q, want %q", received, firstPayload)
+	}
+	assertNoPacket(t, secondHub)
+
+	secondPayload := []byte("second mapped port")
+	writePacket(t, secondSpoke, secondDestination, secondPayload)
+	if received := readPacket(t, secondHub); !bytes.Equal(received, secondPayload) {
+		t.Fatalf("second hub received %q, want %q", received, secondPayload)
+	}
+	assertNoPacket(t, firstHub)
+
+	fromFirstHub := []byte("from first hub")
+	writePacket(t, firstHub, firstDestination, fromFirstHub)
+	if received := readPacket(t, firstSpoke); !bytes.Equal(received, fromFirstHub) {
+		t.Fatalf("first spoke received %q, want %q", received, fromFirstHub)
+	}
+	assertNoPacket(t, secondSpoke)
+
+	fromSecondHub := []byte("from second hub")
+	writePacket(t, secondHub, secondDestination, fromSecondHub)
+	if received := readPacket(t, secondSpoke); !bytes.Equal(received, fromSecondHub) {
+		t.Fatalf("second spoke received %q, want %q", received, fromSecondHub)
+	}
+	assertNoPacket(t, firstSpoke)
+}
+
+func TestServerHubFansOutToAllSpokes(t *testing.T) {
+	portBlock := availableConsecutiveDualStackPortBlock(t, 2)
+	port := portBlock
+	hubPort := portBlock + 1
+	settings := testSettings(port, port, 2)
+	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), hubPort)
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	hub := listenClientOnPort(t, "udp4", "127.0.0.1", hubPort)
+	defer hub.Close()
+	first := listenClient(t, "udp4", "127.0.0.1")
+	defer first.Close()
+	second := listenClient(t, "udp4", "127.0.0.1")
+	defer second.Close()
+	destination := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)
+
+	writePacket(t, first, destination, []byte("register first"))
+	readPacket(t, hub)
+	writePacket(t, second, destination, []byte("register second"))
+	readPacket(t, hub)
+
+	payload := []byte("hub fan out")
+	writePacket(t, hub, destination, payload)
+	if received := readPacket(t, first); !bytes.Equal(received, payload) {
+		t.Fatalf("first spoke received %q, want %q", received, payload)
+	}
+	if received := readPacket(t, second); !bytes.Equal(received, payload) {
+		t.Fatalf("second spoke received %q, want %q", received, payload)
+	}
+}
+
+func TestServerForwardsBetweenIPv4SpokeAndIPv6Hub(t *testing.T) {
+	if !ipv6LoopbackAvailable() {
+		t.Skip("IPv6 loopback is unavailable")
+	}
+	portBlock := availableConsecutiveDualStackPortBlock(t, 2)
+	port := portBlock
+	hubPort := portBlock + 1
+	settings := testSettings(port, port, 1)
+	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("::1"), hubPort)
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	hub := listenClientOnPort(t, "udp6", "::1", hubPort)
+	defer hub.Close()
+	spoke := listenClient(t, "udp4", "127.0.0.1")
+	defer spoke.Close()
+	ipv4Destination := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)
+	ipv6Destination := netip.AddrPortFrom(netip.MustParseAddr("::1"), port)
+
+	fromSpoke := []byte("from IPv4 spoke")
+	writePacket(t, spoke, ipv4Destination, fromSpoke)
+	if received := readPacket(t, hub); !bytes.Equal(received, fromSpoke) {
+		t.Fatalf("IPv6 hub received %q, want %q", received, fromSpoke)
+	}
+
+	fromHub := []byte("from IPv6 hub")
+	writePacket(t, hub, ipv6Destination, fromHub)
+	if received := readPacket(t, spoke); !bytes.Equal(received, fromHub) {
+		t.Fatalf("IPv4 spoke received %q, want %q", received, fromHub)
+	}
+}
+
+func TestValidateSettingsRejectsHubPortMappingOverflow(t *testing.T) {
+	settings := testSettings(40000, 40001, 4)
+	settings.HubEndpoint = netip.MustParseAddrPort("192.0.2.1:65535")
+
+	if err := validateSettings(settings); err == nil {
+		t.Fatal("validateSettings() accepted a hub mapping above port 65535")
+	}
+}
+
 func TestServerRollsBackEarlierBindOnFailure(t *testing.T) {
 	port := availableDualStackPort(t)
 	occupied, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.ParseIP("::1"), Port: int(port)})
@@ -179,8 +313,7 @@ func newTestServer(t *testing.T, portStart uint16, portEnd uint16, maximumPeers 
 
 func testSettings(portStart uint16, portEnd uint16, maximumPeers int) Settings {
 	return Settings{
-		PortStart:       portStart,
-		PortEnd:         portEnd,
+		PortRange:       PortRange{Start: portStart, End: portEnd},
 		PeerTimeout:     time.Minute,
 		MaxPeersPerPort: maximumPeers,
 		UDP4Address:     netip.MustParseAddr("127.0.0.1"),
@@ -235,11 +368,16 @@ func availableDualStackPort(t *testing.T) uint16 {
 }
 
 func availableConsecutiveDualStackPorts(t *testing.T) uint16 {
+	return availableConsecutiveDualStackPortBlock(t, 2)
+}
+
+func availableConsecutiveDualStackPortBlock(t *testing.T, count uint16) uint16 {
 	t.Helper()
-	for candidate := uint16(30000); candidate < 60000; candidate += 2 {
-		connections := make([]*net.UDPConn, 0, 4)
+	for candidate := uint16(30000); uint32(candidate)+uint32(count) <= 60000; candidate += count {
+		connections := make([]*net.UDPConn, 0, int(count)*2)
 		available := true
-		for _, port := range []uint16{candidate, candidate + 1} {
+		for offset := uint16(0); offset < count; offset++ {
+			port := candidate + offset
 			for _, listen := range []struct {
 				network string
 				address string
@@ -262,13 +400,17 @@ func availableConsecutiveDualStackPorts(t *testing.T) uint16 {
 			return candidate
 		}
 	}
-	t.Fatal("could not find consecutive dual-stack UDP ports")
+	t.Fatalf("could not find %d consecutive dual-stack UDP ports", count)
 	return 0
 }
 
 func listenClient(t *testing.T, network string, address string) *net.UDPConn {
+	return listenClientOnPort(t, network, address, 0)
+}
+
+func listenClientOnPort(t *testing.T, network string, address string, port uint16) *net.UDPConn {
 	t.Helper()
-	connection, err := net.ListenUDP(network, &net.UDPAddr{IP: net.ParseIP(address)})
+	connection, err := net.ListenUDP(network, &net.UDPAddr{IP: net.ParseIP(address), Port: int(port)})
 	if err != nil {
 		t.Fatalf("listen with %s client: %v", network, err)
 	}

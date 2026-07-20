@@ -15,9 +15,14 @@ import (
 
 const maximumUDPPacketSize = 65535
 
+type PortRange struct {
+	Start uint16
+	End   uint16
+}
+
 type Settings struct {
-	PortStart       uint16
-	PortEnd         uint16
+	PortRange       PortRange
+	HubEndpoint     netip.AddrPort
 	PeerTimeout     time.Duration
 	MaxPeersPerPort int
 	UDP4Address     netip.Addr
@@ -51,10 +56,11 @@ func NewServer(settings Settings, metrics *observability.Metrics, logger *slog.L
 	if err := validateSettings(settings); err != nil {
 		return nil, err
 	}
-	for port := settings.PortStart; ; port++ {
+	for port := settings.PortRange.Start; ; port++ {
+		hubEndpoint := mappedHubEndpoint(settings, port)
 		relay := &portRelay{
 			port:     port,
-			registry: newPeerRegistry(settings.PeerTimeout, settings.MaxPeersPerPort),
+			registry: newPeerRegistry(settings.PeerTimeout, settings.MaxPeersPerPort, hubEndpoint),
 		}
 
 		udp4, err := listenUDP("udp4", settings.UDP4Address, port)
@@ -75,7 +81,7 @@ func NewServer(settings Settings, metrics *observability.Metrics, logger *slog.L
 		server.relays = append(server.relays, relay)
 		metrics.SetActivePeers(port, 0)
 
-		if port == settings.PortEnd {
+		if port == settings.PortRange.End {
 			break
 		}
 	}
@@ -83,8 +89,18 @@ func NewServer(settings Settings, metrics *observability.Metrics, logger *slog.L
 }
 
 func validateSettings(settings Settings) error {
-	if settings.PortStart == 0 || settings.PortEnd < settings.PortStart {
+	if settings.PortRange.Start == 0 || settings.PortRange.End < settings.PortRange.Start {
 		return errors.New("invalid UDP port range")
+	}
+	if settings.HubEndpoint.IsValid() {
+		address := settings.HubEndpoint.Addr().Unmap()
+		if !address.IsValid() || address.IsUnspecified() || settings.HubEndpoint.Port() == 0 {
+			return errors.New("invalid hub endpoint")
+		}
+		lastHubPort := uint32(settings.HubEndpoint.Port()) + uint32(settings.PortRange.End-settings.PortRange.Start)
+		if lastHubPort > 65535 {
+			return errors.New("hub port mapping ends above 65535")
+		}
 	}
 	if settings.PeerTimeout <= 0 {
 		return errors.New("peer timeout must be positive")
@@ -99,6 +115,17 @@ func validateSettings(settings Settings) error {
 		return errors.New("UDP6 listen address must be IPv6")
 	}
 	return nil
+}
+
+func mappedHubEndpoint(settings Settings, port uint16) netip.AddrPort {
+	if !settings.HubEndpoint.IsValid() {
+		return netip.AddrPort{}
+	}
+	offset := uint32(port - settings.PortRange.Start)
+	return netip.AddrPortFrom(
+		settings.HubEndpoint.Addr().Unmap(),
+		uint16(uint32(settings.HubEndpoint.Port())+offset),
+	)
 }
 
 func (server *Server) Run(ctx context.Context) error {

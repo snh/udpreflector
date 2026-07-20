@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,9 +19,14 @@ const (
 	defaultUDP6Address = "::"
 )
 
+type PortRange struct {
+	Start uint16
+	End   uint16
+}
+
 type Config struct {
-	PortStart       uint16
-	PortEnd         uint16
+	PortRange       PortRange
+	HubEndpoint     netip.AddrPort
 	PeerTimeout     time.Duration
 	MaxPeersPerPort int
 	UDP4Address     netip.Addr
@@ -33,8 +39,8 @@ func Parse(args []string) (Config, error) {
 	flags.SetOutput(io.Discard)
 
 	var raw struct {
-		portStart       int
-		portEnd         int
+		portRange       string
+		hubEndpoint     string
 		peerTimeout     time.Duration
 		maxPeersPerPort int
 		udp4Address     string
@@ -42,8 +48,8 @@ func Parse(args []string) (Config, error) {
 		metricsAddress  string
 	}
 
-	flags.IntVar(&raw.portStart, "port-start", 0, "first UDP port to listen on")
-	flags.IntVar(&raw.portEnd, "port-end", 0, "last UDP port to listen on")
+	flags.StringVar(&raw.portRange, "port-range", "", "inclusive UDP port range (START-END)")
+	flags.StringVar(&raw.hubEndpoint, "hub-endpoint", "", "hub IP and optional base port")
 	flags.DurationVar(&raw.peerTimeout, "peer-timeout", defaultPeerTimeout, "peer inactivity timeout")
 	flags.IntVar(&raw.maxPeersPerPort, "max-peers-per-port", defaultMaxPeers, "maximum active peers per UDP port")
 	flags.StringVar(&raw.udp4Address, "udp4-address", defaultUDP4Address, "IPv4 address to listen on")
@@ -61,17 +67,24 @@ func Parse(args []string) (Config, error) {
 	flags.Visit(func(current *flag.Flag) {
 		provided[current.Name] = true
 	})
-	if !provided["port-start"] || !provided["port-end"] {
-		return Config{}, errors.New("both --port-start and --port-end are required")
+	if !provided["port-range"] {
+		return Config{}, errors.New("--port-range is required")
 	}
-	if raw.portStart < 1 || raw.portStart > 65535 {
-		return Config{}, fmt.Errorf("--port-start must be between 1 and 65535: %d", raw.portStart)
+	portRange, err := parsePortRange(raw.portRange)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid --port-range: %w", err)
 	}
-	if raw.portEnd < 1 || raw.portEnd > 65535 {
-		return Config{}, fmt.Errorf("--port-end must be between 1 and 65535: %d", raw.portEnd)
-	}
-	if raw.portStart > raw.portEnd {
-		return Config{}, errors.New("--port-start must not be greater than --port-end")
+
+	var hubEndpoint netip.AddrPort
+	if provided["hub-endpoint"] {
+		hubEndpoint, err = parseHubEndpoint(raw.hubEndpoint, portRange.Start)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid --hub-endpoint: %w", err)
+		}
+		lastHubPort := uint32(hubEndpoint.Port()) + uint32(portRange.End-portRange.Start)
+		if lastHubPort > 65535 {
+			return Config{}, fmt.Errorf("hub port mapping ends above 65535: %d", lastHubPort)
+		}
 	}
 	if raw.peerTimeout <= 0 {
 		return Config{}, errors.New("--peer-timeout must be positive")
@@ -95,14 +108,68 @@ func Parse(args []string) (Config, error) {
 	}
 
 	return Config{
-		PortStart:       uint16(raw.portStart),
-		PortEnd:         uint16(raw.portEnd),
+		PortRange:       portRange,
+		HubEndpoint:     hubEndpoint,
 		PeerTimeout:     raw.peerTimeout,
 		MaxPeersPerPort: raw.maxPeersPerPort,
 		UDP4Address:     udp4Address,
 		UDP6Address:     udp6Address,
 		MetricsAddress:  raw.metricsAddress,
 	}, nil
+}
+
+func parsePortRange(value string) (PortRange, error) {
+	if strings.Count(value, "-") != 1 {
+		return PortRange{}, errors.New("must use START-END")
+	}
+	rawStart, rawEnd, _ := strings.Cut(value, "-")
+	start, err := parsePort(rawStart)
+	if err != nil {
+		return PortRange{}, fmt.Errorf("invalid start port: %w", err)
+	}
+	end, err := parsePort(rawEnd)
+	if err != nil {
+		return PortRange{}, fmt.Errorf("invalid end port: %w", err)
+	}
+	if start > end {
+		return PortRange{}, errors.New("start port must not be greater than end port")
+	}
+	return PortRange{Start: start, End: end}, nil
+}
+
+func parsePort(value string) (uint16, error) {
+	port, err := strconv.Atoi(value)
+	if err != nil || port < 1 || port > 65535 {
+		return 0, fmt.Errorf("must be between 1 and 65535: %q", value)
+	}
+	return uint16(port), nil
+}
+
+func parseHubEndpoint(value string, defaultPort uint16) (netip.AddrPort, error) {
+	if endpoint, err := netip.ParseAddrPort(value); err == nil {
+		return validateHubEndpoint(endpoint)
+	}
+
+	rawAddress := value
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		rawAddress = strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
+	}
+	address, err := netip.ParseAddr(rawAddress)
+	if err != nil {
+		return netip.AddrPort{}, errors.New("must be a literal IP with an optional port")
+	}
+	return validateHubEndpoint(netip.AddrPortFrom(address, defaultPort))
+}
+
+func validateHubEndpoint(endpoint netip.AddrPort) (netip.AddrPort, error) {
+	address := endpoint.Addr().Unmap()
+	if !address.IsValid() || address.IsUnspecified() {
+		return netip.AddrPort{}, errors.New("IP address must not be unspecified")
+	}
+	if endpoint.Port() == 0 {
+		return netip.AddrPort{}, errors.New("port must be between 1 and 65535")
+	}
+	return netip.AddrPortFrom(address, endpoint.Port()), nil
 }
 
 func validateListenAddress(address string) error {

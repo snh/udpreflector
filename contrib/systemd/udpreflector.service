@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/udpreflector --port-start=40000 --port-end=40100 --metrics-address=127.0.0.1:9090
+ExecStart=/usr/bin/udpreflector --port-range=40000-40100 --metrics-address=127.0.0.1:9090
 DynamicUser=yes
 Restart=on-failure
 RestartSec=2s

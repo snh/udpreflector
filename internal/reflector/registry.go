@@ -7,10 +7,11 @@ import (
 )
 
 type peerRegistry struct {
-	mu       sync.Mutex
-	timeout  time.Duration
-	maxPeers int
-	peers    map[netip.AddrPort]time.Time
+	mu          sync.Mutex
+	timeout     time.Duration
+	maxPeers    int
+	hubEndpoint netip.AddrPort
+	peers       map[netip.AddrPort]time.Time
 }
 
 type admission struct {
@@ -20,11 +21,12 @@ type admission struct {
 	active     int
 }
 
-func newPeerRegistry(timeout time.Duration, maxPeers int) *peerRegistry {
+func newPeerRegistry(timeout time.Duration, maxPeers int, hubEndpoint netip.AddrPort) *peerRegistry {
 	return &peerRegistry{
-		timeout:  timeout,
-		maxPeers: maxPeers,
-		peers:    make(map[netip.AddrPort]time.Time),
+		timeout:     timeout,
+		maxPeers:    maxPeers,
+		hubEndpoint: canonicalAddrPort(hubEndpoint),
+		peers:       make(map[netip.AddrPort]time.Time),
 	}
 }
 
@@ -34,11 +36,31 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 
 	sender = canonicalAddrPort(sender)
 	expired := registry.pruneLocked(now)
+	if registry.hubEndpoint.IsValid() && sender == registry.hubEndpoint {
+		recipients := make([]netip.AddrPort, 0, len(registry.peers))
+		for peer := range registry.peers {
+			recipients = append(recipients, peer)
+		}
+		return admission{
+			accepted:   true,
+			recipients: recipients,
+			expired:    expired,
+			active:     len(registry.peers),
+		}
+	}
 	if _, known := registry.peers[sender]; !known && len(registry.peers) >= registry.maxPeers {
 		return admission{expired: expired, active: len(registry.peers)}
 	}
 
 	registry.peers[sender] = now
+	if registry.hubEndpoint.IsValid() {
+		return admission{
+			accepted:   true,
+			recipients: []netip.AddrPort{registry.hubEndpoint},
+			expired:    expired,
+			active:     len(registry.peers),
+		}
+	}
 	recipients := make([]netip.AddrPort, 0, len(registry.peers)-1)
 	for peer := range registry.peers {
 		if peer != sender {
@@ -74,5 +96,8 @@ func (registry *peerRegistry) pruneLocked(now time.Time) int {
 }
 
 func canonicalAddrPort(endpoint netip.AddrPort) netip.AddrPort {
+	if !endpoint.IsValid() {
+		return netip.AddrPort{}
+	}
 	return netip.AddrPortFrom(endpoint.Addr().Unmap(), endpoint.Port())
 }

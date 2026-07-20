@@ -16,7 +16,7 @@ func TestExecuteRejectsInvalidConfiguration(t *testing.T) {
 	if exitCode != 2 {
 		t.Fatalf("execute() exit code = %d, want 2", exitCode)
 	}
-	if !strings.Contains(stderr.String(), "both --port-start and --port-end are required") {
+	if !strings.Contains(stderr.String(), "--port-range is required") {
 		t.Fatalf("stderr does not explain invalid configuration: %q", stderr.String())
 	}
 }
@@ -74,8 +74,7 @@ func TestExecuteReportsStartupFailure(t *testing.T) {
 
 	var stderr bytes.Buffer
 	exitCode := execute(context.Background(), []string{
-		"--port-start=40000",
-		"--port-end=40000",
+		"--port-range=40000-40000",
 		"--udp4-address=127.0.0.1",
 		"--udp6-address=::1",
 		"--metrics-address=" + occupied.Addr().String(),

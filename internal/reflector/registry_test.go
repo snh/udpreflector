@@ -7,7 +7,7 @@ import (
 )
 
 func TestRegistryFirstPeerHasNoRecipients(t *testing.T) {
-	registry := newPeerRegistry(time.Minute, 2)
+	registry := newPeerRegistry(time.Minute, 2, netip.AddrPort{})
 	result := registry.admit(endpoint("192.0.2.1:1000"), time.Unix(100, 0))
 
 	if !result.accepted {
@@ -22,7 +22,7 @@ func TestRegistryFirstPeerHasNoRecipients(t *testing.T) {
 }
 
 func TestRegistryExcludesOnlyExactSender(t *testing.T) {
-	registry := newPeerRegistry(time.Minute, 3)
+	registry := newPeerRegistry(time.Minute, 3, netip.AddrPort{})
 	now := time.Unix(100, 0)
 	first := endpoint("192.0.2.1:1000")
 	second := endpoint("192.0.2.1:1001")
@@ -38,7 +38,7 @@ func TestRegistryExcludesOnlyExactSender(t *testing.T) {
 }
 
 func TestRegistryRefreshExtendsPeerLifetime(t *testing.T) {
-	registry := newPeerRegistry(time.Minute, 2)
+	registry := newPeerRegistry(time.Minute, 2, netip.AddrPort{})
 	started := time.Unix(100, 0)
 	first := endpoint("192.0.2.1:1000")
 	second := endpoint("192.0.2.2:1000")
@@ -54,7 +54,7 @@ func TestRegistryRefreshExtendsPeerLifetime(t *testing.T) {
 }
 
 func TestRegistryExpiresPeerAtTimeout(t *testing.T) {
-	registry := newPeerRegistry(time.Minute, 2)
+	registry := newPeerRegistry(time.Minute, 2, netip.AddrPort{})
 	started := time.Unix(100, 0)
 	registry.admit(endpoint("192.0.2.1:1000"), started)
 
@@ -66,7 +66,7 @@ func TestRegistryExpiresPeerAtTimeout(t *testing.T) {
 }
 
 func TestRegistryRejectsNewPeerAtCapacity(t *testing.T) {
-	registry := newPeerRegistry(time.Minute, 2)
+	registry := newPeerRegistry(time.Minute, 2, netip.AddrPort{})
 	now := time.Unix(100, 0)
 	first := endpoint("192.0.2.1:1000")
 	second := endpoint("192.0.2.2:1000")
@@ -93,7 +93,7 @@ func TestRegistryRejectsNewPeerAtCapacity(t *testing.T) {
 }
 
 func TestRegistryExpiryFreesCapacity(t *testing.T) {
-	registry := newPeerRegistry(time.Minute, 1)
+	registry := newPeerRegistry(time.Minute, 1, netip.AddrPort{})
 	started := time.Unix(100, 0)
 	registry.admit(endpoint("192.0.2.1:1000"), started)
 
@@ -108,7 +108,7 @@ func TestRegistryExpiryFreesCapacity(t *testing.T) {
 }
 
 func TestRegistryCanonicalisesMappedIPv4Address(t *testing.T) {
-	registry := newPeerRegistry(time.Minute, 1)
+	registry := newPeerRegistry(time.Minute, 1, netip.AddrPort{})
 	now := time.Unix(100, 0)
 	registry.admit(endpoint("[::ffff:192.0.2.1]:1000"), now)
 
@@ -116,6 +116,96 @@ func TestRegistryCanonicalisesMappedIPv4Address(t *testing.T) {
 
 	if !result.accepted || result.active != 1 {
 		t.Fatalf("mapped peer was not recognised as existing: %+v", result)
+	}
+}
+
+func TestRegistrySpokeForwardsOnlyToHub(t *testing.T) {
+	hub := endpoint("192.0.2.100:30000")
+	registry := newPeerRegistry(time.Minute, 2, hub)
+	now := time.Unix(100, 0)
+
+	first := registry.admit(endpoint("192.0.2.1:1000"), now)
+	second := registry.admit(endpoint("192.0.2.2:1000"), now)
+
+	assertRecipients(t, first.recipients, hub)
+	assertRecipients(t, second.recipients, hub)
+	if first.active != 1 || second.active != 2 {
+		t.Fatalf("active spoke counts = (%d, %d), want (1, 2)", first.active, second.active)
+	}
+}
+
+func TestRegistryHubForwardsToAllSpokes(t *testing.T) {
+	hub := endpoint("192.0.2.100:30000")
+	registry := newPeerRegistry(time.Minute, 2, hub)
+	now := time.Unix(100, 0)
+	first := endpoint("192.0.2.1:1000")
+	second := endpoint("192.0.2.2:1000")
+	registry.admit(first, now)
+	registry.admit(second, now)
+
+	result := registry.admit(hub, now)
+
+	assertRecipients(t, result.recipients, first, second)
+	if !result.accepted || result.active != 2 {
+		t.Fatalf("hub admission = %+v, want accepted with 2 active spokes", result)
+	}
+}
+
+func TestRegistryHubRemainsAcceptedAtSpokeCapacity(t *testing.T) {
+	hub := endpoint("192.0.2.100:30000")
+	registry := newPeerRegistry(time.Minute, 1, hub)
+	now := time.Unix(100, 0)
+	spoke := endpoint("192.0.2.1:1000")
+	registry.admit(spoke, now)
+
+	result := registry.admit(hub, now)
+
+	if !result.accepted {
+		t.Fatal("hub was rejected at spoke capacity")
+	}
+	assertRecipients(t, result.recipients, spoke)
+	if result.active != 1 {
+		t.Fatalf("active peers = %d, want 1 spoke", result.active)
+	}
+}
+
+func TestRegistryHubDoesNotReceiveRejectedSpokePacket(t *testing.T) {
+	hub := endpoint("192.0.2.100:30000")
+	registry := newPeerRegistry(time.Minute, 1, hub)
+	now := time.Unix(100, 0)
+	registry.admit(endpoint("192.0.2.1:1000"), now)
+
+	result := registry.admit(endpoint("192.0.2.2:1000"), now)
+
+	if result.accepted {
+		t.Fatal("new spoke was accepted at capacity")
+	}
+	assertRecipients(t, result.recipients)
+}
+
+func TestRegistryCanonicalisesMappedHubAddress(t *testing.T) {
+	hub := endpoint("192.0.2.100:30000")
+	registry := newPeerRegistry(time.Minute, 1, hub)
+	spoke := endpoint("192.0.2.1:1000")
+	now := time.Unix(100, 0)
+	registry.admit(spoke, now)
+
+	result := registry.admit(endpoint("[::ffff:192.0.2.100]:30000"), now)
+
+	assertRecipients(t, result.recipients, spoke)
+}
+
+func TestRegistryExpiresSpokesBeforeHubFanOut(t *testing.T) {
+	hub := endpoint("192.0.2.100:30000")
+	registry := newPeerRegistry(time.Minute, 1, hub)
+	started := time.Unix(100, 0)
+	registry.admit(endpoint("192.0.2.1:1000"), started)
+
+	result := registry.admit(hub, started.Add(time.Minute))
+
+	assertRecipients(t, result.recipients)
+	if result.expired != 1 || result.active != 0 {
+		t.Fatalf("hub admission expiry state = (%d, %d), want (1, 0)", result.expired, result.active)
 	}
 }
 

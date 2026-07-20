@@ -1,15 +1,19 @@
 # UDP Reflector
 
-UDP Reflector listens on an inclusive range of UDP ports and remembers each source IP address and source UDP port that sends a packet. It forwards each accepted packet, unchanged, to every other peer heard on that logical listening port within the inactivity timeout.
+UDP Reflector listens on an inclusive range of UDP ports and remembers each source IP address and source UDP port that sends a packet. By default, it forwards each accepted packet, unchanged, to every other peer heard on that logical listening port within the inactivity timeout.
 
 Each logical port has separate IPv4 and IPv6 sockets but one shared peer set, so an IPv4 sender can reach recent IPv6 peers and vice versa. The exact sender endpoint never receives its own packet. A different source port on the same IP address is a distinct peer.
 
+Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from dynamically learned spokes are sent only to the mapped hub endpoint, while packets from that hub endpoint are sent to every active spoke on the corresponding logical port. The hub is configured rather than learned, so it does not expire or count towards the peer limit.
+
 ## Behaviour and limits
 
-- Both ends of the listening range are required; there is no implicit UDP port range.
+- `--port-range` is required; there is no implicit UDP port range.
 - Peer activity expires after 60 seconds by default. Every accepted packet refreshes its sender.
 - Each logical port accepts at most 256 active peers by default.
 - A packet from a new peer at capacity is dropped without being forwarded. Existing peers remain admitted until they expire.
+- In hub-and-spoke mode, the configured hub is always accepted and only dynamically learned spokes count towards the peer limit and active-peer metric.
+- The hub base port corresponds to the first listening port. Later listening ports map to hub ports at the same offset, and mappings above UDP port 65535 are rejected at startup.
 - Packets are forwarded as independent UDP datagrams without transformation. UDP delivery, ordering, and uniqueness are not guaranteed.
 - Startup is atomic. If any requested IPv4 socket, IPv6 socket, or configured metrics listener cannot bind, the process closes all listeners and exits.
 - Both address families must be available. The service does not silently fall back to partial coverage.
@@ -24,7 +28,7 @@ Go 1.26.5 or later is required.
 make test
 make build
 ./dist/udpreflector --version
-./dist/udpreflector --port-start=40000 --port-end=40100
+./dist/udpreflector --port-range=40000-40100
 ```
 
 Build identifiers use the UTC build date and seven-character Git commit ID, for example `20260717-a1b2c3d`. Local builds with uncommitted changes append `-dirty`; an ordinary `go build` reports `dev`.
@@ -32,8 +36,22 @@ Build identifiers use the UTC build date and seven-character Git commit ID, for 
 The service listens on all IPv4 and IPv6 interfaces by default. Prometheus metrics are disabled unless `--metrics-address` is specified:
 
 ```sh
-./dist/udpreflector --port-start=40000 --port-end=40100 --metrics-address=127.0.0.1:9090
+./dist/udpreflector --port-range=40000-40100 --metrics-address=127.0.0.1:9090
 ```
+
+To send spokes on ports 40000 through 40100 to the same ports on a hub, specify only its IP address:
+
+```sh
+./dist/udpreflector --port-range=40000-40100 --hub-endpoint=1.2.3.4
+```
+
+To use a different hub port range, specify its base port. This maps reflector ports 40000 through 40100 to hub ports 30000 through 30100:
+
+```sh
+./dist/udpreflector --port-range=40000-40100 --hub-endpoint=1.2.3.4:30000
+```
+
+Literal IPv6 addresses without a port may be bare or bracketed. An explicit IPv6 port uses `[address]:port` syntax.
 
 ### Flags
 
@@ -41,8 +59,8 @@ The service listens on all IPv4 and IPv6 interfaces by default. Prometheus metri
 | --- | --- | --- |
 | `--help` | off | Show command usage and exit |
 | `--version` | off | Show build identifier and exit |
-| `--port-start` | required | First UDP port in the inclusive range |
-| `--port-end` | required | Last UDP port in the inclusive range |
+| `--port-range` | required | Inclusive UDP listening range in `START-END` form |
+| `--hub-endpoint` | disabled | Hub IP and optional base port for hub-and-spoke routing |
 | `--peer-timeout` | `1m` | Inactivity period before a peer expires |
 | `--max-peers-per-port` | `256` | Maximum active peers on each logical port |
 | `--udp4-address` | `0.0.0.0` | IPv4 listening address |
@@ -77,9 +95,8 @@ docker run --rm \
   -p 40000-40010:40000-40010/udp \
   -p 127.0.0.1:9090:9090/tcp \
   udpreflector \
-  --port-start=40000 \
-  --port-end=40010 \
-  --metrics-address=:9090
+  --port-range=40000-40010 \
+  --metrics-address=0.0.0.0:9090
 ```
 
 The Dockerfile exposes only the conventional optional metrics TCP port because the UDP range is selected at runtime. `EXPOSE` does not enable metrics, publish ports, or replace explicit `-p` options.
@@ -114,6 +131,8 @@ Ports below 1024 require `CAP_NET_BIND_SERVICE`. Add that capability only when a
 ## Capacity planning
 
 The process opens two UDP sockets per configured port, plus one TCP listener when metrics are enabled. Allow at least $2n$ file descriptors for $n$ UDP ports, or $2n + 1$ with metrics, with additional headroom for the runtime and HTTP connections. The systemd example allows 4096 descriptors.
+
+In mesh mode, each packet can fan out to every other active peer. In hub-and-spoke mode, spoke packets have one destination and hub packets can fan out to every active spoke. The configured hub itself does not consume peer capacity. UDP does not provide a reliable liveness signal for the hub, so packets are sent without requiring it to register first and delivery is not guaranteed.
 
 Firewall rules must permit the entire UDP range for both IPv4 and IPv6 where both families are expected. A large port range also creates two receive loops and two sockets per port, so select only the range the application needs.
 

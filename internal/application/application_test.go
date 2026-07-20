@@ -1,6 +1,7 @@
 package application
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -68,9 +69,52 @@ func TestRunWithoutMetricsStopsCleanly(t *testing.T) {
 	}
 }
 
+func TestRunForwardsSpokePacketToConfiguredHub(t *testing.T) {
+	configuration := testConfiguration(t)
+	configuration.MetricsAddress = ""
+	hub, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatalf("listen as hub: %v", err)
+	}
+	defer hub.Close()
+	configuration.HubEndpoint = hub.LocalAddr().(*net.UDPAddr).AddrPort()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- Run(ctx, configuration, discardLogger())
+	}()
+	defer func() {
+		cancel()
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Errorf("Run() returned an error during shutdown: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("Run() did not stop during shutdown")
+		}
+	}()
+
+	spoke, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatalf("listen as spoke: %v", err)
+	}
+	defer spoke.Close()
+	destination := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), configuration.PortRange.Start)
+	payload := []byte("through application wiring")
+	received, err := exchangeUntilUDPReceived(spoke, destination, hub, payload)
+	if err != nil {
+		t.Fatalf("wait for configured hub delivery: %v", err)
+	}
+	if !bytes.Equal(received, payload) {
+		t.Fatalf("hub received %q, want %q", received, payload)
+	}
+}
+
 func TestRunReleasesMetricsListenerWhenUDPBindFails(t *testing.T) {
 	configuration := testConfiguration(t)
-	occupied, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.ParseIP("::1"), Port: int(configuration.PortStart)})
+	occupied, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.ParseIP("::1"), Port: int(configuration.PortRange.Start)})
 	if err != nil {
 		t.Skipf("IPv6 loopback is unavailable: %v", err)
 	}
@@ -103,8 +147,7 @@ func testConfiguration(t *testing.T) config.Config {
 	t.Helper()
 	port := availableDualStackPort(t)
 	return config.Config{
-		PortStart:       port,
-		PortEnd:         port,
+		PortRange:       config.PortRange{Start: port, End: port},
 		PeerTimeout:     time.Minute,
 		MaxPeersPerPort: 4,
 		UDP4Address:     netip.MustParseAddr("127.0.0.1"),
@@ -162,6 +205,26 @@ func waitForHTTP(t *testing.T, address string) *http.Response {
 	}
 	t.Fatalf("HTTP endpoint %s did not become available", address)
 	return nil
+}
+
+func exchangeUntilUDPReceived(sender *net.UDPConn, destination netip.AddrPort, recipient *net.UDPConn, payload []byte) ([]byte, error) {
+	buffer := make([]byte, 65535)
+	for attempts := 0; attempts < 10; attempts++ {
+		if _, err := sender.WriteToUDPAddrPort(payload, destination); err != nil {
+			return nil, err
+		}
+		if err := recipient.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			return nil, err
+		}
+		read, _, err := recipient.ReadFromUDPAddrPort(buffer)
+		if err == nil {
+			return buffer[:read], nil
+		}
+		if netError, ok := err.(net.Error); !ok || !netError.Timeout() {
+			return nil, err
+		}
+	}
+	return nil, context.DeadlineExceeded
 }
 
 func discardLogger() *slog.Logger {
