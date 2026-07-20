@@ -89,13 +89,15 @@ func Parse(args []string) (Config, error) {
 
 	var hubEndpoint netip.AddrPort
 	if provided["hub-endpoint"] {
-		hubEndpoint, err = parseHubEndpoint(raw.hubEndpoint, portRange.Start)
+		hubEndpoint, err = parseHubEndpoint(raw.hubEndpoint)
 		if err != nil {
 			return Config{}, fmt.Errorf("invalid --hub-endpoint: %w", err)
 		}
-		lastHubPort := uint32(hubEndpoint.Port()) + uint32(portRange.End-portRange.Start)
-		if lastHubPort > 65535 {
-			return Config{}, fmt.Errorf("hub port mapping ends above 65535: %d", lastHubPort)
+		if hubEndpoint.Port() != 0 {
+			lastHubPort := uint32(hubEndpoint.Port()) + uint32(portRange.End-portRange.Start)
+			if lastHubPort > 65535 {
+				return Config{}, fmt.Errorf("hub port mapping ends above 65535: %d", lastHubPort)
+			}
 		}
 	}
 	if raw.peerTimeout <= 0 {
@@ -157,7 +159,7 @@ func parsePort(value string) (uint16, error) {
 	return uint16(port), nil
 }
 
-func parseHubEndpoint(value string, defaultPort uint16) (netip.AddrPort, error) {
+func parseHubEndpoint(value string) (netip.AddrPort, error) {
 	if endpoint, err := netip.ParseAddrPort(value); err == nil {
 		return validateHubEndpoint(endpoint)
 	}
@@ -170,7 +172,11 @@ func parseHubEndpoint(value string, defaultPort uint16) (netip.AddrPort, error) 
 	if err != nil {
 		return netip.AddrPort{}, errors.New("must be a literal IP with an optional port")
 	}
-	return validateHubEndpoint(netip.AddrPortFrom(address, defaultPort))
+	address = address.Unmap()
+	if address.IsUnspecified() {
+		return netip.AddrPort{}, errors.New("IP address must not be unspecified")
+	}
+	return netip.AddrPortFrom(address, 0), nil
 }
 
 func validateHubEndpoint(endpoint netip.AddrPort) (netip.AddrPort, error) {

@@ -4,7 +4,7 @@ UDP Reflector listens on an inclusive range of UDP ports and remembers each sour
 
 Each logical port has separate IPv4 and IPv6 sockets but one shared peer set, so an IPv4 sender can reach recent IPv6 peers and vice versa. The exact sender endpoint never receives its own packet. A different source port on the same IP address is a distinct peer.
 
-Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from dynamically learned spokes are sent only to the mapped hub endpoint, while packets from that hub endpoint are sent to every active spoke on the corresponding logical port. The hub is configured rather than learned, so it does not expire or count towards the peer limit.
+Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from dynamically learned spokes are sent only to active hub peers, while packets from a hub peer are sent to every active spoke on the corresponding logical port. A hub with an explicit port is permanently configured. Without a port, hub source endpoints are learned dynamically by IP address and expire like other peers.
 
 ## Behaviour and limits
 
@@ -12,8 +12,9 @@ Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from 
 - Peer activity expires after 60 seconds by default. Every accepted packet refreshes its sender.
 - Each logical port accepts at most 256 active peers by default.
 - A packet from a new peer at capacity is dropped without being forwarded. Existing peers remain admitted until they expire.
-- In hub-and-spoke mode, the configured hub is always accepted and only dynamically learned spokes count towards the peer limit and active-peer metric.
-- The hub base port corresponds to the first listening port. Later listening ports map to hub ports at the same offset, and mappings above UDP port 65535 are rejected at startup.
+- In hub-and-spoke mode, a hub with an explicit port is always accepted and only dynamically learned peers count towards the peer limit and active-peer metric.
+- An IP-only hub must send a packet before spokes can reach its source endpoint. It counts towards the peer limit and active-peer metric, and expires after the configured inactivity timeout. One peer-capacity slot is reserved for matching hub endpoints.
+- An explicit hub base port corresponds to the first listening port. Later listening ports map to hub ports at the same offset, and mappings above UDP port 65535 are rejected at startup.
 - Packets are forwarded as independent UDP datagrams without transformation. UDP delivery, ordering, and uniqueness are not guaranteed.
 - Startup is atomic. If any requested IPv4 socket, IPv6 socket, or configured metrics listener cannot bind, the process closes all listeners and exits.
 - Both address families must be available. The service does not silently fall back to partial coverage.
@@ -39,11 +40,13 @@ The service listens on all IPv4 and IPv6 interfaces by default. Prometheus metri
 ./dist/udpreflector --port-range=40000-40100 --metrics-address=127.0.0.1:9090
 ```
 
-To send spokes on ports 40000 through 40100 to the same ports on a hub, specify only its IP address:
+To learn hub source endpoints dynamically by IP address, omit the port:
 
 ```sh
 ./dist/udpreflector --port-range=40000-40100 --hub-endpoint=1.2.3.4
 ```
+
+Each logical port learns exact source endpoints independently after receiving traffic from the configured IP address.
 
 To use a different hub port range, specify its base port. This maps reflector ports 40000 through 40100 to hub ports 30000 through 30100:
 
@@ -155,7 +158,7 @@ Ports below 1024 require `CAP_NET_BIND_SERVICE`. Add that capability only when a
 
 The process opens two UDP sockets per configured port, plus one TCP listener when metrics are enabled. Allow at least $2n$ file descriptors for $n$ UDP ports, or $2n + 1$ with metrics, with additional headroom for the runtime and HTTP connections. The systemd example allows 4096 descriptors.
 
-In mesh mode, each packet can fan out to every other active peer. In hub-and-spoke mode, spoke packets have one destination and hub packets can fan out to every active spoke. The configured hub itself does not consume peer capacity. UDP does not provide a reliable liveness signal for the hub, so packets are sent without requiring it to register first and delivery is not guaranteed.
+In mesh mode, each packet can fan out to every other active peer. In hub-and-spoke mode, spoke packets can fan out to active hub endpoints and hub packets can fan out to every active spoke. An explicitly ported hub does not consume peer capacity and receives traffic without registering first; dynamically learned hub endpoints consume capacity and must remain active.
 
 Firewall rules must permit the entire UDP range for both IPv4 and IPv6 where both families are expected. A large port range also creates two receive loops and two sockets per port, so select only the range the application needs.
 

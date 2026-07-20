@@ -218,6 +218,56 @@ func TestRegistryExpiresSpokesBeforeHubFanOut(t *testing.T) {
 	}
 }
 
+func TestRegistryDynamicallyLearnsAndExpiresHubWithoutPort(t *testing.T) {
+	hubAddress := netip.MustParseAddr("192.0.2.100")
+	registry := newPeerRegistry(time.Minute, 2, netip.AddrPortFrom(hubAddress, 0))
+	started := time.Unix(100, 0)
+	spoke := endpoint("192.0.2.1:1000")
+	hub := endpoint("192.0.2.100:30000")
+
+	first := registry.admit(spoke, started)
+	assertRecipients(t, first.recipients)
+
+	learned := registry.admit(hub, started.Add(time.Second))
+	assertRecipients(t, learned.recipients, spoke)
+	if !learned.joined || learned.active != 2 {
+		t.Fatalf("dynamic hub admission = %+v, want joined with 2 active peers", learned)
+	}
+
+	forwarded := registry.admit(spoke, started.Add(30*time.Second))
+	assertRecipients(t, forwarded.recipients, hub)
+
+	expired, active := registry.expire(started.Add(61 * time.Second))
+	assertRecipients(t, expired, hub)
+	if active != 1 {
+		t.Fatalf("active peers = %d, want 1 spoke", active)
+	}
+
+	afterExpiry := registry.admit(spoke, started.Add(62*time.Second))
+	assertRecipients(t, afterExpiry.recipients)
+}
+
+func TestRegistryReservesCapacityForDynamicHub(t *testing.T) {
+	hubAddress := netip.MustParseAddr("192.0.2.100")
+	registry := newPeerRegistry(time.Minute, 2, netip.AddrPortFrom(hubAddress, 0))
+	now := time.Unix(100, 0)
+	spoke := endpoint("192.0.2.1:1000")
+	hub := endpoint("192.0.2.100:30000")
+
+	if result := registry.admit(spoke, now); !result.accepted {
+		t.Fatal("first spoke was rejected")
+	}
+	if result := registry.admit(endpoint("192.0.2.2:1000"), now); result.accepted || result.active != 1 {
+		t.Fatalf("second spoke admission = %+v, want rejected with one active peer", result)
+	}
+
+	result := registry.admit(hub, now)
+	if !result.accepted || !result.joined || result.active != 2 {
+		t.Fatalf("dynamic hub admission = %+v, want joined in reserved slot", result)
+	}
+	assertRecipients(t, result.recipients, spoke)
+}
+
 func endpoint(value string) netip.AddrPort {
 	return netip.MustParseAddrPort(value)
 }

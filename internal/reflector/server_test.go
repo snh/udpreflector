@@ -257,6 +257,43 @@ func TestServerForwardsBetweenIPv4SpokeAndIPv6Hub(t *testing.T) {
 	}
 }
 
+func TestServerLearnsHubEndpointWhenPortIsOmitted(t *testing.T) {
+	if !ipv6LoopbackAvailable() {
+		t.Skip("IPv6 loopback is unavailable")
+	}
+	port := availableDualStackPort(t)
+	settings := testSettings(port, port, 2)
+	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("::1"), 0)
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	hub := listenClient(t, "udp6", "::1")
+	defer hub.Close()
+	spoke := listenClient(t, "udp4", "127.0.0.1")
+	defer spoke.Close()
+	ipv4Destination := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port)
+	ipv6Destination := netip.AddrPortFrom(netip.MustParseAddr("::1"), port)
+
+	writePacket(t, spoke, ipv4Destination, []byte("before hub registration"))
+	assertNoPacket(t, hub)
+
+	fromHub := []byte("register dynamic hub")
+	writePacket(t, hub, ipv6Destination, fromHub)
+	if received := readPacket(t, spoke); !bytes.Equal(received, fromHub) {
+		t.Fatalf("IPv4 spoke received %q, want %q", received, fromHub)
+	}
+
+	fromSpoke := []byte("to dynamic hub")
+	writePacket(t, spoke, ipv4Destination, fromSpoke)
+	if received := readPacket(t, hub); !bytes.Equal(received, fromSpoke) {
+		t.Fatalf("dynamic hub received %q, want %q", received, fromSpoke)
+	}
+}
+
 func TestValidateSettingsRejectsHubPortMappingOverflow(t *testing.T) {
 	settings := testSettings(40000, 40001, 4)
 	settings.HubEndpoint = netip.MustParseAddrPort("192.0.2.1:65535")

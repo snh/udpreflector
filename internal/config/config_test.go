@@ -63,16 +63,16 @@ func TestParseDefaults(t *testing.T) {
 	}
 }
 
-func TestParseHubEndpointDefaultsToRangeStart(t *testing.T) {
+func TestParseHubEndpointWithoutPortRemainsDynamic(t *testing.T) {
 	tests := []struct {
 		name     string
 		value    string
 		expected string
 	}{
-		{name: "IPv4", value: "192.0.2.1", expected: "192.0.2.1:40000"},
-		{name: "bare IPv6", value: "2001:db8::1", expected: "[2001:db8::1]:40000"},
-		{name: "bracketed IPv6", value: "[2001:db8::1]", expected: "[2001:db8::1]:40000"},
-		{name: "mapped IPv4", value: "::ffff:192.0.2.1", expected: "192.0.2.1:40000"},
+		{name: "IPv4", value: "192.0.2.1", expected: "192.0.2.1:0"},
+		{name: "bare IPv6", value: "2001:db8::1", expected: "[2001:db8::1]:0"},
+		{name: "bracketed IPv6", value: "[2001:db8::1]", expected: "[2001:db8::1]:0"},
+		{name: "mapped IPv4", value: "::ffff:192.0.2.1", expected: "192.0.2.1:0"},
 	}
 
 	for _, test := range tests {

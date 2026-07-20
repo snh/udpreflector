@@ -78,7 +78,11 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 
 	hubEndpoint := ""
 	if configuration.HubEndpoint.IsValid() {
-		hubEndpoint = configuration.HubEndpoint.String()
+		if configuration.HubEndpoint.Port() == 0 {
+			hubEndpoint = configuration.HubEndpoint.Addr().String()
+		} else {
+			hubEndpoint = configuration.HubEndpoint.String()
+		}
 	}
 	logger.Info("UDP reflector started",
 		"port_range", fmt.Sprintf("%d-%d", configuration.PortRange.Start, configuration.PortRange.End),

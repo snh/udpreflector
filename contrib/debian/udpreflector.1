@@ -26,10 +26,13 @@ and the start must not be greater than the end.
 .TP
 .BI --hub-endpoint= IP[:port]
 Enable hub-and-spoke routing to a literal IPv4 or IPv6 address. When the port is
-omitted, it defaults to the start of the listening range. The resolved port is
-the hub base port: each later listening port maps to a hub port at the same
-offset. An explicit IPv6 port requires [IPv6]:port syntax. The hub does not
-expire or count towards the peer limit. Mappings above port 65535 are rejected.
+omitted, exact source endpoints from the hub IP are learned independently on
+each logical port. Learned hub endpoints expire and count towards the peer
+limit, with one capacity slot reserved for them. An explicit port is the
+permanent hub base port: each later listening port maps to a hub port at the
+same offset. An explicitly ported hub does not expire or count towards the peer
+limit. An explicit IPv6 port requires [IPv6]:port syntax. Mappings above port
+65535 are rejected.
 .TP
 .BI --peer-timeout= duration
 Peer inactivity timeout. The default is 1m.

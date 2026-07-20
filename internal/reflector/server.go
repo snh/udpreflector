@@ -94,12 +94,14 @@ func validateSettings(settings Settings) error {
 	}
 	if settings.HubEndpoint.IsValid() {
 		address := settings.HubEndpoint.Addr().Unmap()
-		if !address.IsValid() || address.IsUnspecified() || settings.HubEndpoint.Port() == 0 {
+		if !address.IsValid() || address.IsUnspecified() {
 			return errors.New("invalid hub endpoint")
 		}
-		lastHubPort := uint32(settings.HubEndpoint.Port()) + uint32(settings.PortRange.End-settings.PortRange.Start)
-		if lastHubPort > 65535 {
-			return errors.New("hub port mapping ends above 65535")
+		if settings.HubEndpoint.Port() != 0 {
+			lastHubPort := uint32(settings.HubEndpoint.Port()) + uint32(settings.PortRange.End-settings.PortRange.Start)
+			if lastHubPort > 65535 {
+				return errors.New("hub port mapping ends above 65535")
+			}
 		}
 	}
 	if settings.PeerTimeout <= 0 {
@@ -120,6 +122,9 @@ func validateSettings(settings Settings) error {
 func mappedHubEndpoint(settings Settings, port uint16) netip.AddrPort {
 	if !settings.HubEndpoint.IsValid() {
 		return netip.AddrPort{}
+	}
+	if settings.HubEndpoint.Port() == 0 {
+		return netip.AddrPortFrom(settings.HubEndpoint.Addr().Unmap(), 0)
 	}
 	offset := uint32(port - settings.PortRange.Start)
 	return netip.AddrPortFrom(

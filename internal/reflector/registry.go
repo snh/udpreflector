@@ -37,7 +37,7 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 
 	sender = canonicalAddrPort(sender)
 	expired := registry.pruneLocked(now)
-	if registry.hubEndpoint.IsValid() && sender == registry.hubEndpoint {
+	if registry.hasStaticHub() && sender == registry.hubEndpoint {
 		recipients := make([]netip.AddrPort, 0, len(registry.peers))
 		for peer := range registry.peers {
 			recipients = append(recipients, peer)
@@ -50,16 +50,39 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 		}
 	}
 	_, known := registry.peers[sender]
-	if !known && len(registry.peers) >= registry.maxPeers {
+	if !known && registry.atCapacity(sender) {
 		return admission{expired: expired, active: len(registry.peers)}
 	}
 
 	registry.peers[sender] = now
-	if registry.hubEndpoint.IsValid() {
+	if registry.hasStaticHub() {
 		return admission{
 			accepted:   true,
 			joined:     !known,
 			recipients: []netip.AddrPort{registry.hubEndpoint},
+			expired:    expired,
+			active:     len(registry.peers),
+		}
+	}
+	if registry.hasDynamicHub() {
+		recipients := make([]netip.AddrPort, 0, len(registry.peers)-1)
+		if sender.Addr() == registry.hubEndpoint.Addr() {
+			for peer := range registry.peers {
+				if peer.Addr() != registry.hubEndpoint.Addr() {
+					recipients = append(recipients, peer)
+				}
+			}
+		} else {
+			for peer := range registry.peers {
+				if peer.Addr() == registry.hubEndpoint.Addr() {
+					recipients = append(recipients, peer)
+				}
+			}
+		}
+		return admission{
+			accepted:   true,
+			joined:     !known,
+			recipients: recipients,
 			expired:    expired,
 			active:     len(registry.peers),
 		}
@@ -78,6 +101,31 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 		expired:    expired,
 		active:     len(registry.peers),
 	}
+}
+
+func (registry *peerRegistry) hasStaticHub() bool {
+	return registry.hubEndpoint.IsValid() && registry.hubEndpoint.Port() != 0
+}
+
+func (registry *peerRegistry) hasDynamicHub() bool {
+	return registry.hubEndpoint.IsValid() && registry.hubEndpoint.Port() == 0
+}
+
+func (registry *peerRegistry) atCapacity(sender netip.AddrPort) bool {
+	if len(registry.peers) >= registry.maxPeers {
+		return true
+	}
+	if !registry.hasDynamicHub() || sender.Addr() == registry.hubEndpoint.Addr() {
+		return false
+	}
+
+	spokes := 0
+	for peer := range registry.peers {
+		if peer.Addr() != registry.hubEndpoint.Addr() {
+			spokes++
+		}
+	}
+	return spokes >= registry.maxPeers-1
 }
 
 func (registry *peerRegistry) expire(now time.Time) (expired []netip.AddrPort, active int) {
