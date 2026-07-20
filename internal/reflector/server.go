@@ -186,13 +186,20 @@ func (server *Server) ReflectorPeers() []ReflectorPeers {
 		snapshot, expired := relay.registry.snapshot(now)
 		server.metrics.SetActivePeers(relay.port, len(snapshot))
 		server.logExpiredPeers(relay, expired, len(snapshot))
-		peers := make([]Peer, 0, len(snapshot))
+		peerCapacity := len(snapshot)
+		if relay.registry.hasStaticHub() {
+			peerCapacity++
+		}
+		peers := make([]Peer, 0, peerCapacity)
 		for _, peer := range snapshot {
 			peers = append(peers, Peer{
 				Endpoint: peer.endpoint,
 				LastSeen: peer.lastSeen,
 				Hub:      relay.registry.isDynamicHubPeer(peer.endpoint),
 			})
+		}
+		if relay.registry.hasStaticHub() {
+			peers = append(peers, Peer{Endpoint: relay.registry.hubEndpoint, Hub: true})
 		}
 		sort.Slice(peers, func(first, second int) bool {
 			return peers[first].Endpoint.String() < peers[second].Endpoint.String()

@@ -161,6 +161,35 @@ func TestServerListsReflectorPeersByPortAndEndpoint(t *testing.T) {
 	}
 }
 
+func TestServerListsMappedStaticHubForEachPort(t *testing.T) {
+	portBlock := availableConsecutiveDualStackPortBlock(t, 4)
+	portStart := portBlock
+	hubPortStart := portBlock + 2
+	settings := testSettings(portStart, portStart+1, 4)
+	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), hubPortStart)
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	t.Cleanup(server.closeListeners)
+
+	reflectorPeers := server.ReflectorPeers()
+
+	if len(reflectorPeers) != 2 {
+		t.Fatalf("ReflectorPeers() returned %d entries, want 2", len(reflectorPeers))
+	}
+	for index, reflector := range reflectorPeers {
+		if len(reflector.Peers) != 1 {
+			t.Fatalf("reflector %d peers = %+v, want one static hub", reflector.ReflectorPort, reflector.Peers)
+		}
+		hub := reflector.Peers[0]
+		wantEndpoint := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), hubPortStart+uint16(index))
+		if hub.Endpoint != wantEndpoint || !hub.Hub || !hub.LastSeen.IsZero() {
+			t.Fatalf("reflector %d peer = %+v, want static hub %s with no last-seen time", reflector.ReflectorPort, hub, wantEndpoint)
+		}
+	}
+}
+
 func TestServerMapsConsecutivePortsToHubEndpoints(t *testing.T) {
 	portBlock := availableConsecutiveDualStackPortBlock(t, 4)
 	portStart := portBlock
