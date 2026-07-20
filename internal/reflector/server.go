@@ -223,10 +223,7 @@ func (server *Server) receive(ctx context.Context, listener *udpListener) error 
 			continue
 		}
 		if admission.joined {
-			hub := 0
-			if listener.relay.registry.isDynamicHubPeer(sender) {
-				hub = 1
-			}
+			hub := listener.relay.registry.isDynamicHubPeer(sender)
 			server.logger.Info("Peer joined", "peer", sender.String(), "hub", hub, "port", listener.port, "active_peers", admission.active)
 		}
 
@@ -262,10 +259,7 @@ func (server *Server) cleanExpired(ctx context.Context) {
 
 func (server *Server) logExpiredPeers(relay *portRelay, peers []netip.AddrPort, active int) {
 	for _, peer := range peers {
-		hub := 0
-		if relay.registry.isDynamicHubPeer(peer) {
-			hub = 1
-		}
+		hub := relay.registry.isDynamicHubPeer(peer)
 		server.logger.Info("Peer expired", "peer", peer.String(), "hub", hub, "port", relay.port, "active_peers", active)
 	}
 }

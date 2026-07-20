@@ -391,8 +391,8 @@ func TestServerLogsPeerJoiningAndExpiring(t *testing.T) {
 	if joined.attributes["peer"] != client.LocalAddr().String() || joined.attributes["port"] != portString(port) || joined.attributes["active_peers"] != "1" {
 		t.Fatalf("peer joined attributes = %v", joined.attributes)
 	}
-	if joined.attributes["hub"] != "0" {
-		t.Fatalf("peer joined hub attribute = %q, want 0", joined.attributes["hub"])
+	if joined.attributes["hub"] != "false" {
+		t.Fatalf("peer joined hub attribute = %q, want false", joined.attributes["hub"])
 	}
 
 	expired := waitForLog(t, logs)
@@ -402,8 +402,8 @@ func TestServerLogsPeerJoiningAndExpiring(t *testing.T) {
 	if expired.attributes["peer"] != client.LocalAddr().String() || expired.attributes["port"] != portString(port) || expired.attributes["active_peers"] != "0" {
 		t.Fatalf("peer expired attributes = %v", expired.attributes)
 	}
-	if expired.attributes["hub"] != "0" {
-		t.Fatalf("peer expired hub attribute = %q, want 0", expired.attributes["hub"])
+	if expired.attributes["hub"] != "false" {
+		t.Fatalf("peer expired hub attribute = %q, want false", expired.attributes["hub"])
 	}
 }
 
@@ -428,7 +428,7 @@ func TestServerLogsHubJoiningAndExpiring(t *testing.T) {
 	if joined.message != "Peer joined" {
 		t.Fatalf("first log message = %q, want peer joined", joined.message)
 	}
-	if joined.attributes["peer"] != hub.LocalAddr().String() || joined.attributes["hub"] != "1" || joined.attributes["port"] != portString(port) || joined.attributes["active_peers"] != "1" {
+	if joined.attributes["peer"] != hub.LocalAddr().String() || joined.attributes["hub"] != "true" || joined.attributes["port"] != portString(port) || joined.attributes["active_peers"] != "1" {
 		t.Fatalf("hub joined attributes = %v", joined.attributes)
 	}
 
@@ -436,7 +436,7 @@ func TestServerLogsHubJoiningAndExpiring(t *testing.T) {
 	if expired.message != "Peer expired" {
 		t.Fatalf("second log message = %q, want peer expired", expired.message)
 	}
-	if expired.attributes["peer"] != hub.LocalAddr().String() || expired.attributes["hub"] != "1" || expired.attributes["port"] != portString(port) || expired.attributes["active_peers"] != "0" {
+	if expired.attributes["peer"] != hub.LocalAddr().String() || expired.attributes["hub"] != "true" || expired.attributes["port"] != portString(port) || expired.attributes["active_peers"] != "0" {
 		t.Fatalf("hub expired attributes = %v", expired.attributes)
 	}
 }
