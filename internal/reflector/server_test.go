@@ -80,7 +80,8 @@ func TestServerForwardsBetweenAddressFamilies(t *testing.T) {
 	ipv4Destination := netip.MustParseAddrPort("127.0.0.1:" + portString(port))
 	ipv6Destination := netip.MustParseAddrPort("[::1]:" + portString(port))
 
-	writePacket(t, ipv4Client, ipv4Destination, []byte("register IPv4"))
+	fromIPv4 := []byte("from IPv4")
+	writePacket(t, ipv4Client, ipv4Destination, fromIPv4)
 	fromIPv6 := []byte("from IPv6")
 	received, err := exchangeUntilReceived(ipv6Client, ipv6Destination, ipv4Client, fromIPv6)
 	if err != nil {
@@ -90,7 +91,6 @@ func TestServerForwardsBetweenAddressFamilies(t *testing.T) {
 		t.Fatalf("IPv4 client received %q, want %q", received, fromIPv6)
 	}
 
-	fromIPv4 := []byte("from IPv4")
 	writePacket(t, ipv4Client, ipv4Destination, fromIPv4)
 	if received := readPacket(t, ipv6Client); !bytes.Equal(received, fromIPv4) {
 		t.Fatalf("IPv6 client received %q, want %q", received, fromIPv4)
