@@ -6,8 +6,10 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http/httptest"
 	"net/netip"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,6 +197,26 @@ func TestServerListsMappedStaticHubForEachPort(t *testing.T) {
 	}
 }
 
+func TestServerCountsStaticHubAsActivePeerAtStartup(t *testing.T) {
+	portBlock := availableConsecutiveDualStackPortBlock(t, 2)
+	settings := testSettings(portBlock, portBlock, 1)
+	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), portBlock+1)
+	metrics := observability.NewMetrics()
+	server, err := NewServer(settings, metrics, discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	t.Cleanup(server.closeListeners)
+
+	request := httptest.NewRequest("GET", "/metrics", nil)
+	response := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(response, request)
+	want := `udp_reflector_active_peers{port="` + portString(portBlock) + `"} 1`
+	if !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("metrics response does not contain %q", want)
+	}
+}
+
 func TestServerMapsConsecutivePortsToHubEndpoints(t *testing.T) {
 	portBlock := availableConsecutiveDualStackPortBlock(t, 4)
 	portStart := portBlock
@@ -252,7 +274,7 @@ func TestServerHubFansOutToAllSpokes(t *testing.T) {
 	portBlock := availableConsecutiveDualStackPortBlock(t, 2)
 	port := portBlock
 	hubPort := portBlock + 1
-	settings := testSettings(port, port, 2)
+	settings := testSettings(port, port, 3)
 	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), hubPort)
 	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
 	if err != nil {
@@ -291,7 +313,7 @@ func TestServerForwardsBetweenIPv4SpokeAndIPv6Hub(t *testing.T) {
 	portBlock := availableConsecutiveDualStackPortBlock(t, 2)
 	port := portBlock
 	hubPort := portBlock + 1
-	settings := testSettings(port, port, 1)
+	settings := testSettings(port, port, 2)
 	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("::1"), hubPort)
 	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
 	if err != nil {

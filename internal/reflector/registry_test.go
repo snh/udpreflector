@@ -149,20 +149,26 @@ func TestRegistrySpokeForwardsOnlyToHub(t *testing.T) {
 	hub := endpoint("192.0.2.100:30000")
 	registry := newPeerRegistry(time.Minute, 2, hub)
 	now := time.Unix(100, 0)
+	if _, active := registry.expire(now); active != 1 {
+		t.Fatalf("initial active peers = %d, want pre-admitted hub", active)
+	}
 
 	first := registry.admit(endpoint("192.0.2.1:1000"), now)
 	second := registry.admit(endpoint("192.0.2.2:1000"), now)
 
 	assertRecipients(t, first.recipients, hub)
-	assertRecipients(t, second.recipients, hub)
-	if first.active != 1 || second.active != 2 {
-		t.Fatalf("active spoke counts = (%d, %d), want (1, 2)", first.active, second.active)
+	if second.accepted {
+		t.Fatal("second spoke was accepted despite the hub reserving one capacity slot")
+	}
+	assertRecipients(t, second.recipients)
+	if first.active != 2 || second.active != 2 {
+		t.Fatalf("active peer counts = (%d, %d), want (2, 2)", first.active, second.active)
 	}
 }
 
 func TestRegistryHubForwardsToAllSpokes(t *testing.T) {
 	hub := endpoint("192.0.2.100:30000")
-	registry := newPeerRegistry(time.Minute, 2, hub)
+	registry := newPeerRegistry(time.Minute, 3, hub)
 	now := time.Unix(100, 0)
 	first := endpoint("192.0.2.1:1000")
 	second := endpoint("192.0.2.2:1000")
@@ -172,8 +178,8 @@ func TestRegistryHubForwardsToAllSpokes(t *testing.T) {
 	result := registry.admit(hub, now)
 
 	assertRecipients(t, result.recipients, first, second)
-	if !result.accepted || result.active != 2 {
-		t.Fatalf("hub admission = %+v, want accepted with 2 active spokes", result)
+	if !result.accepted || result.active != 3 {
+		t.Fatalf("hub admission = %+v, want accepted with hub and 2 active spokes", result)
 	}
 }
 
@@ -183,18 +189,23 @@ func TestRegistryTracksStaticHubActivity(t *testing.T) {
 	firstSeen := time.Unix(100, 0)
 	lastSeen := firstSeen.Add(30 * time.Second)
 
+	initial, expired := registry.snapshot(firstSeen)
+	if len(initial) != 1 || initial[0].endpoint != hub || !initial[0].lastSeen.IsZero() || len(expired) != 0 {
+		t.Fatalf("initial static hub snapshot = %+v, expired %v", initial, expired)
+	}
+
 	registry.admit(hub, firstSeen)
 	registry.admit(hub, lastSeen)
-	snapshot, ok := registry.staticHubSnapshot()
+	snapshot, expired := registry.snapshot(lastSeen.Add(2 * time.Minute))
 
-	if !ok || snapshot.endpoint != hub || !snapshot.lastSeen.Equal(lastSeen) {
-		t.Fatalf("static hub snapshot = %+v, %t, want %s last seen at %s", snapshot, ok, hub, lastSeen)
+	if len(snapshot) != 1 || snapshot[0].endpoint != hub || !snapshot[0].lastSeen.Equal(lastSeen) || len(expired) != 0 {
+		t.Fatalf("static hub snapshot = %+v, expired %v; want %s last seen at %s", snapshot, expired, hub, lastSeen)
 	}
 }
 
 func TestRegistryHubRemainsAcceptedAtSpokeCapacity(t *testing.T) {
 	hub := endpoint("192.0.2.100:30000")
-	registry := newPeerRegistry(time.Minute, 1, hub)
+	registry := newPeerRegistry(time.Minute, 2, hub)
 	now := time.Unix(100, 0)
 	spoke := endpoint("192.0.2.1:1000")
 	registry.admit(spoke, now)
@@ -205,14 +216,14 @@ func TestRegistryHubRemainsAcceptedAtSpokeCapacity(t *testing.T) {
 		t.Fatal("hub was rejected at spoke capacity")
 	}
 	assertRecipients(t, result.recipients, spoke)
-	if result.active != 1 {
-		t.Fatalf("active peers = %d, want 1 spoke", result.active)
+	if result.active != 2 {
+		t.Fatalf("active peers = %d, want hub and 1 spoke", result.active)
 	}
 }
 
 func TestRegistryHubDoesNotReceiveRejectedSpokePacket(t *testing.T) {
 	hub := endpoint("192.0.2.100:30000")
-	registry := newPeerRegistry(time.Minute, 1, hub)
+	registry := newPeerRegistry(time.Minute, 2, hub)
 	now := time.Unix(100, 0)
 	registry.admit(endpoint("192.0.2.1:1000"), now)
 
@@ -226,7 +237,7 @@ func TestRegistryHubDoesNotReceiveRejectedSpokePacket(t *testing.T) {
 
 func TestRegistryCanonicalisesMappedHubAddress(t *testing.T) {
 	hub := endpoint("192.0.2.100:30000")
-	registry := newPeerRegistry(time.Minute, 1, hub)
+	registry := newPeerRegistry(time.Minute, 2, hub)
 	spoke := endpoint("192.0.2.1:1000")
 	now := time.Unix(100, 0)
 	registry.admit(spoke, now)
@@ -238,7 +249,7 @@ func TestRegistryCanonicalisesMappedHubAddress(t *testing.T) {
 
 func TestRegistryExpiresSpokesBeforeHubFanOut(t *testing.T) {
 	hub := endpoint("192.0.2.100:30000")
-	registry := newPeerRegistry(time.Minute, 1, hub)
+	registry := newPeerRegistry(time.Minute, 2, hub)
 	started := time.Unix(100, 0)
 	registry.admit(endpoint("192.0.2.1:1000"), started)
 
@@ -246,8 +257,8 @@ func TestRegistryExpiresSpokesBeforeHubFanOut(t *testing.T) {
 
 	assertRecipients(t, result.recipients)
 	assertRecipients(t, result.expired, endpoint("192.0.2.1:1000"))
-	if result.active != 0 {
-		t.Fatalf("active peers = %d, want 0", result.active)
+	if result.active != 1 {
+		t.Fatalf("active peers = %d, want permanent hub", result.active)
 	}
 }
 

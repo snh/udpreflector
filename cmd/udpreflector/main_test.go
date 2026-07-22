@@ -64,7 +64,7 @@ func TestExecutePrintsHelpWithoutConfiguration(t *testing.T) {
 				}
 			}
 			for _, description := range []string{
-				"maximum active learned peers per logical port",
+				"maximum active peers per logical port",
 				"peer API and metrics HTTP listen address",
 			} {
 				if !strings.Contains(stdout.String(), description) {

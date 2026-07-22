@@ -52,7 +52,7 @@ func newFlagSet(output io.Writer) (*flag.FlagSet, *rawConfig) {
 	flags.StringVar(&raw.portRange, "port-range", "", "inclusive UDP port range (START-END)")
 	flags.StringVar(&raw.hubEndpoint, "hub-endpoint", "", "hub IP and optional base port")
 	flags.DurationVar(&raw.peerTimeout, "peer-timeout", defaultPeerTimeout, "peer inactivity timeout")
-	flags.IntVar(&raw.maxPeersPerPort, "max-peers-per-port", defaultMaxPeers, "maximum active learned peers per logical port")
+	flags.IntVar(&raw.maxPeersPerPort, "max-peers-per-port", defaultMaxPeers, "maximum active peers per logical port")
 	flags.StringVar(&raw.udp4Address, "udp4-address", defaultUDP4Address, "IPv4 address to listen on")
 	flags.StringVar(&raw.udp6Address, "udp6-address", defaultUDP6Address, "IPv6 address to listen on")
 	flags.StringVar(&raw.httpAddress, "http-address", "", "peer API and metrics HTTP listen address (disabled when omitted)")

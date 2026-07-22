@@ -10,9 +10,9 @@ Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from 
 
 - `--port-range` is required; there is no implicit UDP port range.
 - Peer activity expires after 60 seconds by default. Every accepted packet refreshes its sender.
-- Each logical port accepts at most 256 active learned peers by default.
+- Each logical port accepts at most 256 active peers by default.
 - A packet from a new peer at capacity is dropped without being forwarded. Existing peers remain admitted until they expire.
-- In hub-and-spoke mode, a hub with an explicit port is always accepted and only dynamically learned peers count towards the peer limit and active-peer metric.
+- In hub-and-spoke mode, a hub with an explicit port is always accepted, included in the active-peer metric, and permanently occupies one peer-capacity slot.
 - An IP-only hub must send a packet before spokes can reach its source endpoint. It counts towards the peer limit and active-peer metric, and expires after the configured inactivity timeout. One peer-capacity slot is reserved for matching hub endpoints.
 - An explicit hub base port corresponds to the first listening port. Later listening ports map to hub ports at the same offset, and mappings above UDP port 65535 are rejected at startup.
 - Packets are forwarded as independent UDP datagrams without transformation. UDP delivery, ordering, and uniqueness are not guaranteed.
@@ -65,7 +65,7 @@ Literal IPv6 addresses without a port may be bare or bracketed. An explicit IPv6
 | `--port-range` | required | Inclusive UDP listening range in `START-END` form |
 | `--hub-endpoint` | disabled | Hub IP and optional base port for hub-and-spoke routing |
 | `--peer-timeout` | `1m` | Inactivity period before a peer expires |
-| `--max-peers-per-port` | `256` | Maximum active learned peers per logical port |
+| `--max-peers-per-port` | `256` | Maximum active peers per logical port |
 | `--udp4-address` | `0.0.0.0` | IPv4 listening address |
 | `--udp6-address` | `::` | IPv6 listening address |
 | `--http-address` | disabled | Peer API and metrics HTTP listen address |
@@ -179,7 +179,7 @@ Ports below 1024 require `CAP_NET_BIND_SERVICE`. Add that capability only when a
 
 The process opens two UDP sockets per configured port, plus one TCP listener when HTTP is enabled. Allow at least $2n$ file descriptors for $n$ UDP ports, or $2n + 1$ with HTTP, with additional headroom for the runtime and HTTP connections. The systemd example allows 4096 descriptors.
 
-In mesh mode, each packet can fan out to every other active peer. In hub-and-spoke mode, spoke packets can fan out to active hub endpoints and hub packets can fan out to every active spoke. An explicitly ported hub does not consume peer capacity and receives traffic without registering first; dynamically learned hub endpoints consume capacity and must remain active.
+In mesh mode, each packet can fan out to every other active peer. In hub-and-spoke mode, spoke packets can fan out to active hub endpoints and hub packets can fan out to every active spoke. An explicitly ported hub permanently consumes its reserved peer-capacity slot and receives traffic without registering first; dynamically learned hub endpoints consume their reserved slot while active.
 
 Firewall rules must permit the entire UDP range for both IPv4 and IPv6 where both families are expected. A large port range also creates two receive loops and two sockets per port, so select only the range the application needs.
 

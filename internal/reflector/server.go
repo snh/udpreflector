@@ -91,7 +91,7 @@ func NewServer(settings Settings, metrics *observability.Metrics, logger *slog.L
 		relay.udp6 = udp6
 		server.listeners = append(server.listeners, &udpListener{port: port, family: "ipv6", conn: udp6, relay: relay})
 		server.relays = append(server.relays, relay)
-		metrics.SetActivePeers(port, 0)
+		metrics.SetActivePeers(port, len(relay.registry.peers))
 
 		if port == settings.PortRange.End {
 			break
@@ -184,23 +184,15 @@ func (server *Server) ReflectorPeers() []ReflectorPeers {
 	reflectorPeers := make([]ReflectorPeers, 0, len(server.relays))
 	for _, relay := range server.relays {
 		snapshot, expired := relay.registry.snapshot(now)
-		staticHub, hasStaticHub := relay.registry.staticHubSnapshot()
 		server.metrics.SetActivePeers(relay.port, len(snapshot))
 		server.logExpiredPeers(relay, expired, len(snapshot))
-		peerCapacity := len(snapshot)
-		if hasStaticHub {
-			peerCapacity++
-		}
-		peers := make([]Peer, 0, peerCapacity)
+		peers := make([]Peer, 0, len(snapshot))
 		for _, peer := range snapshot {
 			peers = append(peers, Peer{
 				Endpoint: peer.endpoint,
 				LastSeen: peer.lastSeen,
-				Hub:      relay.registry.isDynamicHubPeer(peer.endpoint),
+				Hub:      relay.registry.isHubPeer(peer.endpoint),
 			})
-		}
-		if hasStaticHub {
-			peers = append(peers, Peer{Endpoint: staticHub.endpoint, LastSeen: staticHub.lastSeen, Hub: true})
 		}
 		sort.Slice(peers, func(first, second int) bool {
 			return peers[first].Endpoint.String() < peers[second].Endpoint.String()
@@ -231,7 +223,7 @@ func (server *Server) receive(ctx context.Context, listener *udpListener) error 
 			continue
 		}
 		if admission.joined {
-			hub := listener.relay.registry.isDynamicHubPeer(sender)
+			hub := listener.relay.registry.isHubPeer(sender)
 			server.logger.Info("Peer joined", "peer", sender.String(), "hub", hub, "port", listener.port, "active_peers", admission.active)
 		}
 
@@ -267,7 +259,7 @@ func (server *Server) cleanExpired(ctx context.Context) {
 
 func (server *Server) logExpiredPeers(relay *portRelay, peers []netip.AddrPort, active int) {
 	for _, peer := range peers {
-		hub := relay.registry.isDynamicHubPeer(peer)
+		hub := relay.registry.isHubPeer(peer)
 		server.logger.Info("Peer expired", "peer", peer.String(), "hub", hub, "port", relay.port, "active_peers", active)
 	}
 }

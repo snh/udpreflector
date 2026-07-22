@@ -30,15 +30,15 @@ omitted, exact source endpoints from the hub IP are learned independently on
 each logical port. Learned hub endpoints expire and count towards the peer
 limit, with one capacity slot reserved for them. An explicit port is the
 permanent hub base port: each later listening port maps to a hub port at the
-same offset. An explicitly ported hub does not expire or count towards the peer
-limit. An explicit IPv6 port requires [IPv6]:port syntax. Mappings above port
-65535 are rejected.
+same offset. An explicitly ported hub does not expire, permanently occupies one
+peer-capacity slot, and is included in the active-peer metric. An explicit IPv6
+port requires [IPv6]:port syntax. Mappings above port 65535 are rejected.
 .TP
 .BI --peer-timeout= duration
 Peer inactivity timeout. The default is 1m.
 .TP
 .BI --max-peers-per-port= count
-Maximum active learned peers per logical port. The default is 256.
+Maximum active peers per logical port. The default is 256.
 .TP
 .BI --udp4-address= address
 IPv4 listening address. The default is 0.0.0.0.
