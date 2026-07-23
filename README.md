@@ -74,7 +74,7 @@ When enabled, the single HTTP listener serves both `/peers` and `/metrics`; neit
 
 ## Peer API
 
-`GET /peers` returns every configured reflector port with its currently active learned peers and any explicitly configured hub. Results are ordered by reflector port and endpoint. `hub` is true for a dynamically learned peer matching the configured IP-only hub or for an explicitly configured hub. For an explicit hub, `last_seen` records its latest accepted packet and is the zero timestamp until the hub sends one.
+`GET /peers` returns every configured reflector port with its currently active learned peers and any explicitly configured hub. Results are ordered by reflector port and endpoint. In mesh mode, peer objects contain `endpoint` and `last_seen`:
 
 ```json
 [
@@ -83,13 +83,24 @@ When enabled, the single HTTP listener serves both `/peers` and `/metrics`; neit
     "peers": [
       {
         "endpoint": "192.0.2.1:12345",
-        "last_seen": "2026-07-20T12:34:56Z",
-        "hub": false
+        "last_seen": "2026-07-20T12:34:56Z"
       }
     ]
   }
 ]
 ```
+
+In hub-and-spoke mode, every peer object also contains `hub`. It is `true` for a dynamically learned peer matching the configured IP-only hub or for an explicitly configured hub, and `false` for a spoke:
+
+```json
+{
+  "endpoint": "192.0.2.1:12345",
+  "last_seen": "2026-07-20T12:34:56Z",
+  "hub": false
+}
+```
+
+For an explicit hub, `last_seen` records its latest accepted packet and is the zero timestamp until the hub sends one.
 
 The response uses `Cache-Control: no-store`. A configured port without an explicit hub and with no active peers has an empty `peers` array.
 

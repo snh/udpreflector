@@ -152,6 +152,9 @@ func TestServerListsReflectorPeersByPortAndEndpoint(t *testing.T) {
 	if reflectorPeers[0].ReflectorPort != portStart || reflectorPeers[1].ReflectorPort != portStart+1 {
 		t.Fatalf("reflector ports = (%d, %d), want (%d, %d)", reflectorPeers[0].ReflectorPort, reflectorPeers[1].ReflectorPort, portStart, portStart+1)
 	}
+	if !reflectorPeers[0].HubAndSpoke || reflectorPeers[1].HubAndSpoke {
+		t.Fatalf("hub-and-spoke modes = (%t, %t), want (true, false)", reflectorPeers[0].HubAndSpoke, reflectorPeers[1].HubAndSpoke)
+	}
 	if len(reflectorPeers[0].Peers) != 2 || reflectorPeers[0].Peers[0].Endpoint.String() != "192.0.2.1:1000" || reflectorPeers[0].Peers[0].Hub {
 		t.Fatalf("first reflector peers = %+v, want sorted spoke then hub", reflectorPeers[0].Peers)
 	}
@@ -186,6 +189,9 @@ func TestServerListsMappedStaticHubForEachPort(t *testing.T) {
 		t.Fatalf("ReflectorPeers() returned %d entries, want 2", len(reflectorPeers))
 	}
 	for index, reflector := range reflectorPeers {
+		if !reflector.HubAndSpoke {
+			t.Fatalf("reflector %d hub-and-spoke mode = false, want true", reflector.ReflectorPort)
+		}
 		if len(reflector.Peers) != 1 {
 			t.Fatalf("reflector %d peers = %+v, want one static hub", reflector.ReflectorPort, reflector.Peers)
 		}

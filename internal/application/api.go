@@ -15,7 +15,7 @@ type reflectorPeersSource interface {
 type peerResponse struct {
 	Endpoint string    `json:"endpoint"`
 	LastSeen time.Time `json:"last_seen"`
-	Hub      bool      `json:"hub"`
+	Hub      *bool     `json:"hub,omitempty"`
 }
 
 type reflectorPeersResponse struct {
@@ -30,10 +30,14 @@ func newPeersHandler(source reflectorPeersSource) http.Handler {
 		for reflectorIndex, reflector := range reflectorPeers {
 			peers := make([]peerResponse, len(reflector.Peers))
 			for peerIndex, peer := range reflector.Peers {
+				var hub *bool
+				if reflector.HubAndSpoke {
+					hub = &peer.Hub
+				}
 				peers[peerIndex] = peerResponse{
 					Endpoint: peer.Endpoint.String(),
 					LastSeen: peer.LastSeen,
-					Hub:      peer.Hub,
+					Hub:      hub,
 				}
 			}
 			body[reflectorIndex] = reflectorPeersResponse{ReflectorPort: reflector.ReflectorPort, Peers: peers}

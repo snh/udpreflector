@@ -48,8 +48,8 @@ func TestRunServesPeerAPIAndMetricsOnOneListener(t *testing.T) {
 	if reflectorPeers[0].Peers[0].Endpoint != peer.LocalAddr().(*net.UDPAddr).AddrPort().String() {
 		t.Fatalf("peer endpoint = %s, want %s", reflectorPeers[0].Peers[0].Endpoint, peer.LocalAddr())
 	}
-	if reflectorPeers[0].Peers[0].Hub {
-		t.Fatal("mesh peer was reported as a hub")
+	if reflectorPeers[0].Peers[0].Hub != nil {
+		t.Fatalf("mesh peer hub property = %v, want omitted", *reflectorPeers[0].Peers[0].Hub)
 	}
 
 	response, err = http.Get("http://" + configuration.HTTPAddress + "/")

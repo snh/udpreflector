@@ -38,6 +38,7 @@ type Peer struct {
 
 type ReflectorPeers struct {
 	ReflectorPort uint16
+	HubAndSpoke   bool
 	Peers         []Peer
 }
 
@@ -197,7 +198,11 @@ func (server *Server) ReflectorPeers() []ReflectorPeers {
 		sort.Slice(peers, func(first, second int) bool {
 			return peers[first].Endpoint.String() < peers[second].Endpoint.String()
 		})
-		reflectorPeers = append(reflectorPeers, ReflectorPeers{ReflectorPort: relay.port, Peers: peers})
+		reflectorPeers = append(reflectorPeers, ReflectorPeers{
+			ReflectorPort: relay.port,
+			HubAndSpoke:   relay.registry.hasStaticHub() || relay.registry.hasDynamicHub(),
+			Peers:         peers,
+		})
 	}
 	return reflectorPeers
 }

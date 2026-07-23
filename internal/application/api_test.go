@@ -23,6 +23,7 @@ func TestPeersHandlerListsActivePeers(t *testing.T) {
 	lastSeen := time.Date(2026, time.July, 20, 12, 34, 56, 0, time.UTC)
 	handler := newPeersHandler(staticReflectorPeersSource{reflectorPeers: []reflector.ReflectorPeers{{
 		ReflectorPort: 40000,
+		HubAndSpoke:   true,
 		Peers: []reflector.Peer{
 			{Endpoint: netip.MustParseAddrPort("192.0.2.1:12345"), LastSeen: lastSeen, Hub: false},
 			{Endpoint: netip.MustParseAddrPort("[2001:db8::1]:12345"), LastSeen: lastSeen, Hub: true},
@@ -52,10 +53,36 @@ func TestPeersHandlerListsActivePeers(t *testing.T) {
 	if len(reflectorPeers[0].Peers) != 2 {
 		t.Fatalf("response contains %d peers, want 2", len(reflectorPeers[0].Peers))
 	}
-	if reflectorPeers[0].Peers[0].Endpoint != "192.0.2.1:12345" || !reflectorPeers[0].Peers[0].LastSeen.Equal(lastSeen) || reflectorPeers[0].Peers[0].Hub {
+	if reflectorPeers[0].Peers[0].Endpoint != "192.0.2.1:12345" || !reflectorPeers[0].Peers[0].LastSeen.Equal(lastSeen) || reflectorPeers[0].Peers[0].Hub == nil || *reflectorPeers[0].Peers[0].Hub {
 		t.Fatalf("first peer = %+v, want spoke last seen at %s", reflectorPeers[0].Peers[0], lastSeen)
 	}
-	if reflectorPeers[0].Peers[1].Endpoint != "[2001:db8::1]:12345" || !reflectorPeers[0].Peers[1].Hub {
+	if reflectorPeers[0].Peers[1].Endpoint != "[2001:db8::1]:12345" || reflectorPeers[0].Peers[1].Hub == nil || !*reflectorPeers[0].Peers[1].Hub {
 		t.Fatalf("second peer = %+v, want hub", reflectorPeers[0].Peers[1])
+	}
+}
+
+func TestPeersHandlerOmitsHubOutsideHubAndSpokeMode(t *testing.T) {
+	lastSeen := time.Date(2026, time.July, 20, 12, 34, 56, 0, time.UTC)
+	handler := newPeersHandler(staticReflectorPeersSource{reflectorPeers: []reflector.ReflectorPeers{{
+		ReflectorPort: 40000,
+		Peers: []reflector.Peer{
+			{Endpoint: netip.MustParseAddrPort("192.0.2.1:12345"), LastSeen: lastSeen},
+		},
+	}}})
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/peers", nil))
+
+	var body []struct {
+		Peers []map[string]json.RawMessage `json:"peers"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body) != 1 || len(body[0].Peers) != 1 {
+		t.Fatalf("response = %+v, want one peer", body)
+	}
+	if _, found := body[0].Peers[0]["hub"]; found {
+		t.Fatalf("peer = %s, unexpected hub property", body[0].Peers[0])
 	}
 }
