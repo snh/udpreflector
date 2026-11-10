@@ -171,7 +171,8 @@ func TestRunSubscribesPeerToEveryConfiguredPort(t *testing.T) {
 	}
 	response.Body.Close()
 
-	peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	sourcePortStart := availableConsecutiveDualStackPorts(t)
+	peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: int(sourcePortStart)})
 	if err != nil {
 		t.Fatalf("listen as peer: %v", err)
 	}
@@ -182,8 +183,11 @@ func TestRunSubscribesPeerToEveryConfiguredPort(t *testing.T) {
 	}
 
 	reflectorPeers := waitForPeerOnReflectorPorts(t, "http://"+configuration.HTTPAddress+"/peers", 2)
-	wantEndpoint := peer.LocalAddr().(*net.UDPAddr).AddrPort().String()
 	for _, reflector := range reflectorPeers {
+		wantEndpoint := netip.AddrPortFrom(
+			netip.MustParseAddr("127.0.0.1"),
+			sourcePortStart+(reflector.ReflectorPort-portStart),
+		).String()
 		if len(reflector.Peers) != 1 || reflector.Peers[0].Endpoint != wantEndpoint {
 			t.Fatalf("reflector port %d peers = %+v, want %s", reflector.ReflectorPort, reflector.Peers, wantEndpoint)
 		}

@@ -145,17 +145,48 @@ func TestServerSubscribesPeerToAllPorts(t *testing.T) {
 	cancel, result := runTestServer(server)
 	defer stopTestServer(t, cancel, result)
 
-	first := listenClient(t, "udp4", "127.0.0.1")
+	sourcePortStart := availableConsecutiveDualStackPortBlock(t, 2)
+	first := listenClientOnPort(t, "udp4", "127.0.0.1", sourcePortStart)
 	defer first.Close()
+	firstNextPort := listenClientOnPort(t, "udp4", "127.0.0.1", sourcePortStart+1)
+	defer firstNextPort.Close()
 	second := listenClient(t, "udp4", "127.0.0.1")
 	defer second.Close()
 
 	writePacket(t, first, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart)), []byte("register on first port"))
-	waitForPeerOnAllPorts(t, server, first.LocalAddr().(*net.UDPAddr).AddrPort())
+	waitForMappedPeerOnAllPorts(t, server, portStart, first.LocalAddr().(*net.UDPAddr).AddrPort())
 	payload := []byte("send on second port")
 	writePacket(t, second, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart+1)), payload)
-	if received := readPacket(t, first); !bytes.Equal(received, payload) {
-		t.Fatalf("first peer received %q, want %q", received, payload)
+	if received := readPacket(t, firstNextPort); !bytes.Equal(received, payload) {
+		t.Fatalf("mapped peer port received %q, want %q", received, payload)
+	}
+}
+
+func TestServerMapsPeerSourcePortRangeToReflectorRange(t *testing.T) {
+	portStart := availableConsecutiveDualStackPortBlock(t, 10)
+	settings := testSettings(portStart, portStart+9, 4)
+	settings.SubscribeAllPorts = true
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	t.Cleanup(server.closeListeners)
+
+	sender := netip.MustParseAddrPort("192.0.2.1:5000")
+	admissions := server.admitPeer(server.relays[0], sender, time.Now())
+
+	if len(admissions) != 10 {
+		t.Fatalf("admission count = %d, want 10", len(admissions))
+	}
+	for index, result := range admissions {
+		wantEndpoint := netip.AddrPortFrom(sender.Addr(), uint16(5000+index))
+		if !result.admission.accepted || result.endpoint != wantEndpoint {
+			t.Fatalf("reflector port %d admission = %+v, endpoint %s; want accepted endpoint %s", result.relay.port, result.admission, result.endpoint, wantEndpoint)
+		}
+		snapshot, _ := result.relay.registry.snapshot(time.Now())
+		if len(snapshot) != 1 || snapshot[0].endpoint != wantEndpoint {
+			t.Fatalf("reflector port %d peers = %+v, want %s", result.relay.port, snapshot, wantEndpoint)
+		}
 	}
 }
 
@@ -173,14 +204,15 @@ func TestServerCrossPortSubscriptionRefreshesEveryPort(t *testing.T) {
 	started := time.Unix(100, 0)
 	server.admitPeer(server.relays[0], sender, started)
 	refreshedAt := started.Add(30 * time.Second)
-	admissions := server.admitPeer(server.relays[2], sender, refreshedAt)
+	admissions := server.admitPeer(server.relays[2], netip.MustParseAddrPort("192.0.2.1:1002"), refreshedAt)
 
-	for _, result := range admissions {
+	for index, result := range admissions {
+		expected := netip.AddrPortFrom(sender.Addr(), sender.Port()+uint16(index))
 		if !result.admission.accepted || result.admission.joined {
 			t.Fatalf("port %d refresh = %+v, want accepted existing peer", result.relay.port, result.admission)
 		}
 		snapshot, expired := result.relay.registry.snapshot(started.Add(61 * time.Second))
-		if len(expired) != 0 || len(snapshot) != 1 || snapshot[0].endpoint != sender || !snapshot[0].lastSeen.Equal(refreshedAt) {
+		if len(expired) != 0 || len(snapshot) != 1 || snapshot[0].endpoint != expected || !snapshot[0].lastSeen.Equal(refreshedAt) {
 			t.Fatalf("port %d snapshot = %+v, expired %v; want refreshed peer", result.relay.port, snapshot, expired)
 		}
 	}
@@ -196,13 +228,13 @@ func TestServerCrossPortSubscriptionExpiresFromEveryPort(t *testing.T) {
 	}
 	t.Cleanup(server.closeListeners)
 
-	sender := netip.MustParseAddrPort("192.0.2.1:1000")
+	sender := netip.MustParseAddrPort("192.0.2.1:1001")
 	started := time.Unix(100, 0)
 	server.admitPeer(server.relays[1], sender, started)
 
-	for _, relay := range server.relays {
+	for index, relay := range server.relays {
 		expired, active := relay.registry.expire(started.Add(settings.PeerTimeout))
-		assertRecipients(t, expired, sender)
+		assertRecipients(t, expired, netip.AddrPortFrom(sender.Addr(), uint16(1000+index)))
 		if active != 0 {
 			t.Fatalf("port %d active peers = %d, want 0", relay.port, active)
 		}
@@ -225,9 +257,13 @@ func TestServerCrossPortSubscriptionUsesExpiredCapacity(t *testing.T) {
 	sender := netip.MustParseAddrPort("192.0.2.2:2000")
 	admissions := server.admitPeer(server.relays[0], sender, started.Add(settings.PeerTimeout))
 
-	for _, result := range admissions {
+	for index, result := range admissions {
+		expected := netip.AddrPortFrom(sender.Addr(), sender.Port()+uint16(index))
 		if !result.admission.accepted || !result.admission.joined || result.admission.active != 1 {
 			t.Fatalf("port %d admission = %+v, want new peer after expiry", result.relay.port, result.admission)
+		}
+		if result.endpoint != expected {
+			t.Fatalf("port %d endpoint = %s, want %s", result.relay.port, result.endpoint, expected)
 		}
 	}
 	assertRecipients(t, admissions[1].admission.expired, expiredPeer)
@@ -254,10 +290,50 @@ func TestServerRejectsCrossPortSubscriptionAtomicallyAtCapacity(t *testing.T) {
 		}
 		snapshot, _ := result.relay.registry.snapshot(now)
 		for _, peer := range snapshot {
-			if peer.endpoint == sender {
+			if peer.endpoint == result.endpoint {
 				t.Fatalf("port %d contains peer after atomic rejection", result.relay.port)
 			}
 		}
+	}
+}
+
+func TestServerRejectsCrossPortSubscriptionMappingOutsideUDPRange(t *testing.T) {
+	tests := []struct {
+		name        string
+		sourceIndex int
+		senderPort  uint16
+	}{
+		{name: "underflow", sourceIndex: 2, senderPort: 2},
+		{name: "overflow", sourceIndex: 0, senderPort: 65534},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			portStart := availableConsecutiveDualStackPortBlock(t, 3)
+			settings := testSettings(portStart, portStart+2, 4)
+			settings.SubscribeAllPorts = true
+			server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+			if err != nil {
+				t.Fatalf("NewServer(): %v", err)
+			}
+			t.Cleanup(server.closeListeners)
+
+			sender := netip.AddrPortFrom(netip.MustParseAddr("192.0.2.1"), test.senderPort)
+			admissions := server.admitPeer(server.relays[test.sourceIndex], sender, time.Now())
+
+			if len(admissions) != 1 || admissions[0].admission.accepted {
+				t.Fatalf("admissions = %+v, want one rejected source-port admission", admissions)
+			}
+			if admissions[0].admission.dropReason != "peer_port_mapping" {
+				t.Fatalf("drop reason = %q, want peer_port_mapping", admissions[0].admission.dropReason)
+			}
+			for _, relay := range server.relays {
+				snapshot, _ := relay.registry.snapshot(time.Now())
+				if len(snapshot) != 0 {
+					t.Fatalf("port %d peers = %+v, want none after invalid mapping", relay.port, snapshot)
+				}
+			}
+		})
 	}
 }
 
@@ -305,11 +381,10 @@ func TestServerClassifiesCrossSubscribedHubPerPort(t *testing.T) {
 	if !admissions[0].admission.accepted || !admissions[1].admission.accepted {
 		t.Fatal("mapped hub endpoint was not subscribed to every port")
 	}
-	if !server.relays[0].registry.isHubPeer(sender) {
-		t.Fatal("sender is not classified as the hub on its mapped port")
-	}
-	if server.relays[1].registry.isHubPeer(sender) {
-		t.Fatal("sender is classified as the hub on a differently mapped port")
+	for _, result := range admissions {
+		if !result.relay.registry.isHubPeer(result.endpoint) {
+			t.Fatalf("mapped endpoint %s is not classified as the hub on port %d", result.endpoint, result.relay.port)
+		}
 	}
 }
 
@@ -325,15 +400,15 @@ func TestServerClassifiesDynamicHubOnEverySubscribedPort(t *testing.T) {
 	t.Cleanup(server.closeListeners)
 
 	spoke := netip.MustParseAddrPort("192.0.2.1:1000")
-	hub := netip.MustParseAddrPort("192.0.2.100:30000")
+	hub := netip.MustParseAddrPort("192.0.2.100:30001")
 	server.admitPeer(server.relays[0], spoke, time.Unix(100, 0))
 	admissions := server.admitPeer(server.relays[1], hub, time.Unix(101, 0))
 
-	for _, result := range admissions {
-		if !result.relay.registry.isHubPeer(hub) {
+	for index, result := range admissions {
+		if !result.relay.registry.isHubPeer(result.endpoint) {
 			t.Fatalf("port %d did not classify dynamic hub", result.relay.port)
 		}
-		assertRecipients(t, result.admission.recipients, spoke)
+		assertRecipients(t, result.admission.recipients, netip.AddrPortFrom(spoke.Addr(), spoke.Port()+uint16(index)))
 	}
 }
 
@@ -348,13 +423,16 @@ func TestServerCrossPortSubscriptionDoesNotEchoSender(t *testing.T) {
 	cancel, result := runTestServer(server)
 	defer stopTestServer(t, cancel, result)
 
-	client := listenClient(t, "udp4", "127.0.0.1")
-	defer client.Close()
-	writePacket(t, client, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart)), []byte("register"))
-	waitForPeerOnAllPorts(t, server, client.LocalAddr().(*net.UDPAddr).AddrPort())
+	sourcePortStart := availableConsecutiveDualStackPortBlock(t, 2)
+	firstPortClient := listenClientOnPort(t, "udp4", "127.0.0.1", sourcePortStart)
+	defer firstPortClient.Close()
+	secondPortClient := listenClientOnPort(t, "udp4", "127.0.0.1", sourcePortStart+1)
+	defer secondPortClient.Close()
+	writePacket(t, firstPortClient, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart)), []byte("register"))
+	waitForMappedPeerOnAllPorts(t, server, portStart, firstPortClient.LocalAddr().(*net.UDPAddr).AddrPort())
 
-	writePacket(t, client, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart+1)), []byte("same peer"))
-	assertNoPacket(t, client)
+	writePacket(t, secondPortClient, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart+1)), []byte("same peer range"))
+	assertNoPacket(t, secondPortClient)
 }
 
 func TestServerCrossPortSubscriptionForwardsBetweenAddressFamilies(t *testing.T) {
@@ -371,17 +449,20 @@ func TestServerCrossPortSubscriptionForwardsBetweenAddressFamilies(t *testing.T)
 	cancel, result := runTestServer(server)
 	defer stopTestServer(t, cancel, result)
 
-	ipv4Client := listenClient(t, "udp4", "127.0.0.1")
+	sourcePortStart := availableConsecutiveDualStackPortBlock(t, 2)
+	ipv4Client := listenClientOnPort(t, "udp4", "127.0.0.1", sourcePortStart)
 	defer ipv4Client.Close()
+	ipv4NextPort := listenClientOnPort(t, "udp4", "127.0.0.1", sourcePortStart+1)
+	defer ipv4NextPort.Close()
 	ipv6Client := listenClient(t, "udp6", "::1")
 	defer ipv6Client.Close()
 	writePacket(t, ipv4Client, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart)), []byte("register IPv4"))
-	waitForPeerOnAllPorts(t, server, ipv4Client.LocalAddr().(*net.UDPAddr).AddrPort())
+	waitForMappedPeerOnAllPorts(t, server, portStart, ipv4Client.LocalAddr().(*net.UDPAddr).AddrPort())
 
 	payload := []byte("from IPv6 on another port")
 	writePacket(t, ipv6Client, netip.MustParseAddrPort("[::1]:"+portString(portStart+1)), payload)
-	if received := readPacket(t, ipv4Client); !bytes.Equal(received, payload) {
-		t.Fatalf("IPv4 peer received %q, want %q", received, payload)
+	if received := readPacket(t, ipv4NextPort); !bytes.Equal(received, payload) {
+		t.Fatalf("mapped IPv4 peer port received %q, want %q", received, payload)
 	}
 }
 
@@ -397,10 +478,11 @@ func TestServerCrossPortSubscriptionUpdatesMetricsForEveryPort(t *testing.T) {
 	cancel, result := runTestServer(server)
 	defer stopTestServer(t, cancel, result)
 
-	client := listenClient(t, "udp4", "127.0.0.1")
+	sourcePortStart := availableConsecutiveDualStackPortBlock(t, 2)
+	client := listenClientOnPort(t, "udp4", "127.0.0.1", sourcePortStart)
 	defer client.Close()
 	writePacket(t, client, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart)), []byte("register"))
-	waitForPeerOnAllPorts(t, server, client.LocalAddr().(*net.UDPAddr).AddrPort())
+	waitForMappedPeerOnAllPorts(t, server, portStart, client.LocalAddr().(*net.UDPAddr).AddrPort())
 
 	request := httptest.NewRequest("GET", "/metrics", nil)
 	response := httptest.NewRecorder()
@@ -425,13 +507,15 @@ func TestServerCrossPortSubscriptionLogsJoinForEveryPort(t *testing.T) {
 	cancel, result := runTestServer(server)
 	defer stopTestServer(t, cancel, result)
 
-	client := listenClient(t, "udp4", "127.0.0.1")
+	sourcePortStart := availableConsecutiveDualStackPortBlock(t, 2)
+	client := listenClientOnPort(t, "udp4", "127.0.0.1", sourcePortStart)
 	defer client.Close()
 	writePacket(t, client, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart)), []byte("register"))
 
 	for port := portStart; port <= portStart+1; port++ {
 		entry := waitForLog(t, logs)
-		if entry.message != "Peer joined" || entry.attributes["port"] != portString(port) || entry.attributes["active_peers"] != "1" {
+		expectedPeer := netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), sourcePortStart+(port-portStart))
+		if entry.message != "Peer joined" || entry.attributes["peer"] != expectedPeer.String() || entry.attributes["port"] != portString(port) || entry.attributes["active_peers"] != "1" {
 			t.Fatalf("join log = %+v, want port %d with one active peer", entry, port)
 		}
 	}
@@ -983,16 +1067,20 @@ func stopTestServer(t *testing.T, cancel context.CancelFunc, result <-chan error
 	}
 }
 
-func waitForPeerOnAllPorts(t *testing.T, server *Server, endpoint netip.AddrPort) {
+func waitForMappedPeerOnAllPorts(t *testing.T, server *Server, sourcePort uint16, endpoint netip.AddrPort) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		reflectors := server.ReflectorPeers()
 		foundOnEveryPort := len(reflectors) > 0
 		for _, reflector := range reflectors {
+			mappedEndpoint := netip.AddrPortFrom(
+				endpoint.Addr(),
+				uint16(int(endpoint.Port())+int(reflector.ReflectorPort)-int(sourcePort)),
+			)
 			found := false
 			for _, peer := range reflector.Peers {
-				if peer.Endpoint == endpoint {
+				if peer.Endpoint == mappedEndpoint {
 					found = true
 					break
 				}
@@ -1007,7 +1095,7 @@ func waitForPeerOnAllPorts(t *testing.T, server *Server, endpoint netip.AddrPort
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("peer %s was not subscribed to every port", endpoint)
+	t.Fatalf("peer range based at %s was not subscribed to every port", endpoint)
 }
 
 func availableDualStackPort(t *testing.T) uint16 {

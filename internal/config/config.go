@@ -53,7 +53,7 @@ func newFlagSet(output io.Writer) (*flag.FlagSet, *rawConfig) {
 
 	flags.StringVar(&raw.portRange, "port-range", "", "inclusive UDP port range (START-END)")
 	flags.StringVar(&raw.hubEndpoint, "hub-endpoint", "", "hub IP and optional base port")
-	flags.BoolVar(&raw.subscribeAllPorts, "subscribe-all-ports", false, "subscribe a peer to every configured UDP port")
+	flags.BoolVar(&raw.subscribeAllPorts, "subscribe-all-ports", false, "subscribe corresponding peer source ports across the UDP range")
 	flags.DurationVar(&raw.peerTimeout, "peer-timeout", defaultPeerTimeout, "peer inactivity timeout")
 	flags.IntVar(&raw.maxPeersPerPort, "max-peers-per-port", defaultMaxPeers, "maximum active peers per logical port")
 	flags.StringVar(&raw.udp4Address, "udp4-address", defaultUDP4Address, "IPv4 address to listen on")

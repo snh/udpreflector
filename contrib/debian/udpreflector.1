@@ -10,8 +10,8 @@ udpreflector \- relay UDP packets between recently active endpoints
 listens on an inclusive range of IPv4 and IPv6 UDP ports, learns remote
 endpoints from received packets, and forwards each accepted packet unchanged
 to the other recently active endpoints on the same logical port. An optional
-cross-port subscription mode subscribes an endpoint learned on any port to
-every configured port. An optional
+cross-port subscription mode maps a peer's corresponding source-port range
+across every configured reflector port. An optional
 hub-and-spoke mode sends learned peers only to a configured hub and sends hub
 packets to all active peers on the corresponding logical port.
 .PP
@@ -37,10 +37,14 @@ peer-capacity slot, and is included in the active-peer metric. An explicit IPv6
 port requires [IPv6]:port syntax. Mappings above port 65535 are rejected.
 .TP
 .B --subscribe-all-ports
-Subscribe an endpoint learned on any logical port to every configured port.
-Admission is atomic: if any port is at peer capacity, the packet is dropped and
-the endpoint is not added to any port. In hub-and-spoke mode, hub or spoke
-classification remains independent for each port.
+Map corresponding peer source ports across the configured reflector range. For
+example, source port 5000 sending to reflector port 10000 maps source ports
+5000 through 5009 to reflector ports 10000 through 10009. A packet received on
+a later reflector port derives the same mapping by offset. Admission is atomic:
+if any mapped source port falls outside 1 through 65535 or any reflector port
+is at peer capacity, the packet is dropped and no mapped endpoint is added. In
+hub-and-spoke mode, hub or spoke classification remains independent for each
+mapped endpoint.
 .TP
 .BI --peer-timeout= duration
 Peer inactivity timeout. The default is 1m.

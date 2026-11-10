@@ -22,6 +22,7 @@ type peerState struct {
 type admission struct {
 	accepted   bool
 	joined     bool
+	dropReason string
 	recipients []netip.AddrPort
 	expired    []netip.AddrPort
 	active     int

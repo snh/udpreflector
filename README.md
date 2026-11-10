@@ -4,7 +4,7 @@ UDP Reflector listens on an inclusive range of UDP ports and remembers each sour
 
 Each logical port has separate IPv4 and IPv6 sockets but one shared peer set, so an IPv4 sender can reach recent IPv6 peers and vice versa. The exact sender endpoint never receives its own packet. A different source port on the same IP address is a distinct peer.
 
-With `--subscribe-all-ports`, an endpoint learned on any logical port is subscribed to every configured port. Admission is atomic: if any port lacks peer capacity, the packet is dropped and the endpoint is not added to any port. In hub-and-spoke mode, the endpoint's hub or spoke role is evaluated independently for each port.
+With `--subscribe-all-ports`, an endpoint learned on any logical port subscribes the corresponding source-port range to the full reflector range. If source port 5000 sends to reflector port 10000 in a configured range of 10000–10009, the service subscribes source ports 5000–5009 to reflector ports 10000–10009 respectively. A packet received on a later reflector port derives the same mapping by offset. Admission is atomic: if any mapped source port falls outside 1–65535 or any reflector port lacks peer capacity, the packet is dropped and the endpoint range is not added to any port. In hub-and-spoke mode, each mapped endpoint's hub or spoke role is evaluated independently for its reflector port.
 
 Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from dynamically learned spokes are sent only to active hub peers, while packets from a hub peer are sent to every active spoke on the corresponding logical port. A hub with an explicit port is permanently configured. Without a port, hub source endpoints are learned dynamically by IP address and expire like other peers.
 
@@ -67,7 +67,7 @@ Literal IPv6 addresses without a port may be bare or bracketed. An explicit IPv6
 | `--version` | off | Show build identifier and exit |
 | `--port-range` | required | Inclusive UDP listening range in `START-END` form |
 | `--hub-endpoint` | disabled | Hub IP and optional base port for hub-and-spoke routing |
-| `--subscribe-all-ports` | off | Subscribe a peer learned on any port to every configured port |
+| `--subscribe-all-ports` | off | Map corresponding peer source ports across the full reflector port range |
 | `--peer-timeout` | `1m` | Inactivity period before a peer expires |
 | `--max-peers-per-port` | `256` | Maximum active peers per logical port |
 | `--udp4-address` | `0.0.0.0` | IPv4 listening address |

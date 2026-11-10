@@ -69,6 +69,7 @@ type udpListener struct {
 
 type relayAdmission struct {
 	relay     *portRelay
+	endpoint  netip.AddrPort
 	admission admission
 }
 
@@ -238,15 +239,19 @@ func (server *Server) receive(ctx context.Context, listener *udpListener) error 
 			server.metrics.SetActivePeers(result.relay.port, result.admission.active)
 			server.logExpiredPeers(result.relay, result.admission.expired, result.admission.active)
 			if result.admission.joined {
-				hub := result.relay.registry.isHubPeer(sender)
-				server.logger.Info("Peer joined", "peer", sender.String(), "hub", hub, "port", result.relay.port, "active_peers", result.admission.active)
+				hub := result.relay.registry.isHubPeer(result.endpoint)
+				server.logger.Info("Peer joined", "peer", result.endpoint.String(), "hub", hub, "port", result.relay.port, "active_peers", result.admission.active)
 			}
 			if result.relay == listener.relay {
 				sourceAdmission = result.admission
 			}
 		}
 		if !sourceAdmission.accepted {
-			server.metrics.RecordDrop(listener.port, listener.family, "peer_capacity")
+			reason := sourceAdmission.dropReason
+			if reason == "" {
+				reason = "peer_capacity"
+			}
+			server.metrics.RecordDrop(listener.port, listener.family, reason)
 			continue
 		}
 
@@ -264,18 +269,33 @@ func (server *Server) receive(ctx context.Context, listener *udpListener) error 
 
 func (server *Server) admitPeer(source *portRelay, sender netip.AddrPort, now time.Time) []relayAdmission {
 	if !server.subscribeAllPorts {
-		return []relayAdmission{{relay: source, admission: source.registry.admit(sender, now)}}
+		return []relayAdmission{{relay: source, endpoint: sender, admission: source.registry.admit(sender, now)}}
 	}
 
 	server.admissionMu.Lock()
 	defer server.admissionMu.Unlock()
 
+	endpoints, valid := server.mappedPeerEndpoints(source, sender)
+	if !valid {
+		check := source.registry.checkAdmission(sender, now)
+		return []relayAdmission{{
+			relay:    source,
+			endpoint: sender,
+			admission: admission{
+				dropReason: "peer_port_mapping",
+				expired:    check.expired,
+				active:     check.active,
+			},
+		}}
+	}
+
 	results := make([]relayAdmission, len(server.relays))
 	allAccepted := true
 	for index, relay := range server.relays {
-		check := relay.registry.checkAdmission(sender, now)
+		check := relay.registry.checkAdmission(endpoints[index], now)
 		results[index] = relayAdmission{
-			relay: relay,
+			relay:    relay,
+			endpoint: endpoints[index],
 			admission: admission{
 				expired: check.expired,
 				active:  check.active,
@@ -291,10 +311,22 @@ func (server *Server) admitPeer(source *portRelay, sender netip.AddrPort, now ti
 
 	for index, relay := range server.relays {
 		expired := results[index].admission.expired
-		results[index].admission = relay.registry.admit(sender, now)
+		results[index].admission = relay.registry.admit(endpoints[index], now)
 		results[index].admission.expired = append(expired, results[index].admission.expired...)
 	}
 	return results
+}
+
+func (server *Server) mappedPeerEndpoints(source *portRelay, sender netip.AddrPort) ([]netip.AddrPort, bool) {
+	endpoints := make([]netip.AddrPort, len(server.relays))
+	for index, relay := range server.relays {
+		mappedPort := int(sender.Port()) + int(relay.port) - int(source.port)
+		if mappedPort < 1 || mappedPort > 65535 {
+			return nil, false
+		}
+		endpoints[index] = netip.AddrPortFrom(sender.Addr().Unmap(), uint16(mappedPort))
+	}
+	return endpoints, true
 }
 
 func (server *Server) cleanExpired(ctx context.Context) {

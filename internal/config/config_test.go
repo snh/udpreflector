@@ -90,7 +90,7 @@ func TestPrintDefaultsIncludesSubscribeAllPorts(t *testing.T) {
 	if !strings.Contains(output.String(), "-subscribe-all-ports") {
 		t.Fatalf("defaults do not include subscribe-all-ports: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "subscribe a peer to every configured UDP port") {
+	if !strings.Contains(output.String(), "subscribe corresponding peer source ports across the UDP range") {
 		t.Fatalf("defaults do not describe subscribe-all-ports: %q", output.String())
 	}
 }
