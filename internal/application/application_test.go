@@ -34,6 +34,20 @@ func TestRunServesPeerAPIAndMetricsOnOneListener(t *testing.T) {
 	}
 	response.Body.Close()
 
+	healthURL := "http://" + configuration.HTTPAddress + "/healthz"
+	response = waitForHTTP(t, healthURL)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("health status = %d, want 200", response.StatusCode)
+	}
+	healthBody, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		t.Fatalf("read health response: %v", err)
+	}
+	if string(healthBody) != "ok\n" {
+		t.Fatalf("health body = %q, want %q", healthBody, "ok\n")
+	}
+
 	peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
 	if err != nil {
 		t.Fatalf("listen as peer: %v", err)

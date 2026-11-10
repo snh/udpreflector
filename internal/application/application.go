@@ -62,6 +62,7 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 	var httpServer *http.Server
 	if httpListener != nil {
 		mux := http.NewServeMux()
+		mux.Handle("GET /healthz", newHealthHandler())
 		mux.Handle("GET /metrics", metrics.Handler())
 		mux.Handle("GET /peers", newPeersHandler(server))
 		httpServer = &http.Server{

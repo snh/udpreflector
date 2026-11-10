@@ -23,6 +23,14 @@ type reflectorPeersResponse struct {
 	Peers         []peerResponse `json:"peers"`
 }
 
+func newHealthHandler() http.Handler {
+	return http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Cache-Control", "no-store")
+		response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = response.Write([]byte("ok\n"))
+	})
+}
+
 func newPeersHandler(source reflectorPeersSource) http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		reflectorPeers := source.ReflectorPeers()

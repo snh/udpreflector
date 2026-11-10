@@ -19,6 +19,25 @@ func (source staticReflectorPeersSource) ReflectorPeers() []reflector.ReflectorP
 	return source.reflectorPeers
 }
 
+func TestHealthHandlerReportsHealthy(t *testing.T) {
+	response := httptest.NewRecorder()
+
+	newHealthHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.Code)
+	}
+	if contentType := response.Header().Get("Content-Type"); contentType != "text/plain; charset=utf-8" {
+		t.Fatalf("Content-Type = %q, want text/plain; charset=utf-8", contentType)
+	}
+	if cacheControl := response.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cacheControl)
+	}
+	if body := response.Body.String(); body != "ok\n" {
+		t.Fatalf("body = %q, want %q", body, "ok\n")
+	}
+}
+
 func TestPeersHandlerListsActivePeers(t *testing.T) {
 	lastSeen := time.Date(2026, time.July, 20, 12, 34, 56, 0, time.UTC)
 	handler := newPeersHandler(staticReflectorPeersSource{reflectorPeers: []reflector.ReflectorPeers{{

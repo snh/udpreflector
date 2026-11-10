@@ -74,7 +74,11 @@ Literal IPv6 addresses without a port may be bare or bracketed. An explicit IPv6
 | `--udp6-address` | `::` | IPv6 listening address |
 | `--http-address` | disabled | Peer API and metrics HTTP listen address |
 
-When enabled, the single HTTP listener serves both `/peers` and `/metrics`; neither endpoint can be enabled separately. Keep it on loopback unless remote access is required and protected, because the peer API exposes source addresses and ports.
+When enabled, the single HTTP listener serves `/healthz`, `/peers`, and `/metrics`; the endpoints cannot be enabled separately. Keep it on loopback unless remote access is required and protected, because the peer API exposes source addresses and ports.
+
+## Health check
+
+`GET /healthz` returns `200 OK` with a plain-text `ok` response whenever the HTTP server is running. The response uses `Cache-Control: no-store`.
 
 ## Peer API
 
