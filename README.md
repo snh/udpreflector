@@ -205,21 +205,3 @@ The GitHub Actions build runs static analysis, normal tests, and race tests, the
 ## Licence
 
 UDP Reflector is available under the [MIT License](LICENSE).
-
-## Development sandbox
-
-Local macOS development follows [`.github/copilot-instructions.md`](.github/copilot-instructions.md). All package installation, formatting, builds, tests, and application processes run inside the reusable Alpine Lima VM named `udpreflector-sandbox`.
-
-Enter the mounted repository in the guest and run the checks there:
-
-```sh
-limactl shell udpreflector-sandbox
-cd /Users/snh/Documents/Code/udpreflector
-gofmt -w ./cmd ./internal
-GOTOOLCHAIN=auto make vet
-GOTOOLCHAIN=auto make test
-GOTOOLCHAIN=auto make test-race
-GOTOOLCHAIN=auto make build
-```
-
-The repository is mounted at the same absolute path in the guest. Alpine's packaged Go toolchain may default to `GOTOOLCHAIN=local`; `GOTOOLCHAIN=auto` selects and caches the Go 1.27.3 toolchain required by the module. Do not recreate an existing sandbox merely to update tools; install missing packages with Alpine's package manager.
