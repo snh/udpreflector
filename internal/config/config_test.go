@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -67,6 +69,29 @@ func TestParseDefaults(t *testing.T) {
 	}
 	if configuration.SubscribeAllPorts {
 		t.Error("SubscribeAllPorts = true, want disabled")
+	}
+}
+
+func TestParseExplicitlyDisablesSubscribeAllPorts(t *testing.T) {
+	configuration, err := Parse([]string{"--port-range=40000-40000", "--subscribe-all-ports=false"})
+	if err != nil {
+		t.Fatalf("Parse() returned an unexpected error: %v", err)
+	}
+	if configuration.SubscribeAllPorts {
+		t.Fatal("SubscribeAllPorts = true, want explicitly disabled")
+	}
+}
+
+func TestPrintDefaultsIncludesSubscribeAllPorts(t *testing.T) {
+	var output bytes.Buffer
+
+	PrintDefaults(&output)
+
+	if !strings.Contains(output.String(), "-subscribe-all-ports") {
+		t.Fatalf("defaults do not include subscribe-all-ports: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "subscribe a peer to every configured UDP port") {
+		t.Fatalf("defaults do not describe subscribe-all-ports: %q", output.String())
 	}
 }
 
