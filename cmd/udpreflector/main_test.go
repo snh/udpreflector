@@ -58,7 +58,7 @@ func TestExecutePrintsHelpWithoutConfiguration(t *testing.T) {
 			if !strings.Contains(stdout.String(), "Usage: udpreflector [flags]") {
 				t.Fatalf("stdout does not contain usage text: %q", stdout.String())
 			}
-			for _, flagName := range []string{"-port-range", "-hub-endpoint", "-peer-timeout"} {
+			for _, flagName := range []string{"-port-range", "-hub-endpoint", "-subscribe-all-ports", "-peer-timeout"} {
 				if !strings.Contains(stdout.String(), flagName) {
 					t.Errorf("stdout does not contain current flag %q: %q", flagName, stdout.String())
 				}

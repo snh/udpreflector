@@ -22,12 +22,13 @@ type PortRange struct {
 }
 
 type Settings struct {
-	PortRange       PortRange
-	HubEndpoint     netip.AddrPort
-	PeerTimeout     time.Duration
-	MaxPeersPerPort int
-	UDP4Address     netip.Addr
-	UDP6Address     netip.Addr
+	PortRange         PortRange
+	HubEndpoint       netip.AddrPort
+	SubscribeAllPorts bool
+	PeerTimeout       time.Duration
+	MaxPeersPerPort   int
+	UDP4Address       netip.Addr
+	UDP6Address       netip.Addr
 }
 
 type Peer struct {
@@ -43,11 +44,13 @@ type ReflectorPeers struct {
 }
 
 type Server struct {
-	metrics   *observability.Metrics
-	logger    *slog.Logger
-	relays    []*portRelay
-	listeners []*udpListener
-	closeOnce sync.Once
+	metrics           *observability.Metrics
+	logger            *slog.Logger
+	relays            []*portRelay
+	listeners         []*udpListener
+	subscribeAllPorts bool
+	admissionMu       sync.Mutex
+	closeOnce         sync.Once
 }
 
 type portRelay struct {
@@ -64,8 +67,17 @@ type udpListener struct {
 	relay  *portRelay
 }
 
+type relayAdmission struct {
+	relay     *portRelay
+	admission admission
+}
+
 func NewServer(settings Settings, metrics *observability.Metrics, logger *slog.Logger) (*Server, error) {
-	server := &Server{metrics: metrics, logger: logger}
+	server := &Server{
+		metrics:           metrics,
+		logger:            logger,
+		subscribeAllPorts: settings.SubscribeAllPorts,
+	}
 	if err := validateSettings(settings); err != nil {
 		return nil, err
 	}
@@ -220,20 +232,26 @@ func (server *Server) receive(ctx context.Context, listener *udpListener) error 
 		}
 
 		server.metrics.RecordReceived(listener.port, listener.family, read)
-		admission := listener.relay.registry.admit(sender, time.Now())
-		server.metrics.SetActivePeers(listener.port, admission.active)
-		server.logExpiredPeers(listener.relay, admission.expired, admission.active)
-		if !admission.accepted {
+		admissions := server.admitPeer(listener.relay, sender, time.Now())
+		var sourceAdmission admission
+		for _, result := range admissions {
+			server.metrics.SetActivePeers(result.relay.port, result.admission.active)
+			server.logExpiredPeers(result.relay, result.admission.expired, result.admission.active)
+			if result.admission.joined {
+				hub := result.relay.registry.isHubPeer(sender)
+				server.logger.Info("Peer joined", "peer", sender.String(), "hub", hub, "port", result.relay.port, "active_peers", result.admission.active)
+			}
+			if result.relay == listener.relay {
+				sourceAdmission = result.admission
+			}
+		}
+		if !sourceAdmission.accepted {
 			server.metrics.RecordDrop(listener.port, listener.family, "peer_capacity")
 			continue
 		}
-		if admission.joined {
-			hub := listener.relay.registry.isHubPeer(sender)
-			server.logger.Info("Peer joined", "peer", sender.String(), "hub", hub, "port", listener.port, "active_peers", admission.active)
-		}
 
 		payload := buffer[:read]
-		for _, recipient := range admission.recipients {
+		for _, recipient := range sourceAdmission.recipients {
 			family, connection := listener.relay.connectionFor(recipient)
 			if _, err := connection.WriteToUDPAddrPort(payload, recipient); err != nil {
 				server.metrics.RecordSendError(listener.port, family)
@@ -242,6 +260,41 @@ func (server *Server) receive(ctx context.Context, listener *udpListener) error 
 			server.metrics.RecordForwarded(listener.port, family, read)
 		}
 	}
+}
+
+func (server *Server) admitPeer(source *portRelay, sender netip.AddrPort, now time.Time) []relayAdmission {
+	if !server.subscribeAllPorts {
+		return []relayAdmission{{relay: source, admission: source.registry.admit(sender, now)}}
+	}
+
+	server.admissionMu.Lock()
+	defer server.admissionMu.Unlock()
+
+	results := make([]relayAdmission, len(server.relays))
+	allAccepted := true
+	for index, relay := range server.relays {
+		check := relay.registry.checkAdmission(sender, now)
+		results[index] = relayAdmission{
+			relay: relay,
+			admission: admission{
+				expired: check.expired,
+				active:  check.active,
+			},
+		}
+		if !check.accepted {
+			allAccepted = false
+		}
+	}
+	if !allAccepted {
+		return results
+	}
+
+	for index, relay := range server.relays {
+		expired := results[index].admission.expired
+		results[index].admission = relay.registry.admit(sender, now)
+		results[index].admission.expired = append(expired, results[index].admission.expired...)
+	}
+	return results
 }
 
 func (server *Server) cleanExpired(ctx context.Context) {

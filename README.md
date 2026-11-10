@@ -4,11 +4,14 @@ UDP Reflector listens on an inclusive range of UDP ports and remembers each sour
 
 Each logical port has separate IPv4 and IPv6 sockets but one shared peer set, so an IPv4 sender can reach recent IPv6 peers and vice versa. The exact sender endpoint never receives its own packet. A different source port on the same IP address is a distinct peer.
 
+With `--subscribe-all-ports`, an endpoint learned on any logical port is subscribed to every configured port. Admission is atomic: if any port lacks peer capacity, the packet is dropped and the endpoint is not added to any port. In hub-and-spoke mode, the endpoint's hub or spoke role is evaluated independently for each port.
+
 Hub-and-spoke mode is enabled with `--hub-endpoint`. In this mode, packets from dynamically learned spokes are sent only to active hub peers, while packets from a hub peer are sent to every active spoke on the corresponding logical port. A hub with an explicit port is permanently configured. Without a port, hub source endpoints are learned dynamically by IP address and expire like other peers.
 
 ## Behaviour and limits
 
 - `--port-range` is required; there is no implicit UDP port range.
+- Ports keep independent peer sets unless `--subscribe-all-ports` is enabled.
 - Peer activity expires after 60 seconds by default. Every accepted packet refreshes its sender.
 - Each logical port accepts at most 256 active peers by default.
 - A packet from a new peer at capacity is dropped without being forwarded. Existing peers remain admitted until they expire.
@@ -23,7 +26,7 @@ The peer cap bounds memory and per-packet fan-out, but this remains a UDP reflec
 
 ## Build and run
 
-Go 1.26.5 or later is required.
+Go 1.27.3 or later is required.
 
 ```sh
 make test
@@ -64,6 +67,7 @@ Literal IPv6 addresses without a port may be bare or bracketed. An explicit IPv6
 | `--version` | off | Show build identifier and exit |
 | `--port-range` | required | Inclusive UDP listening range in `START-END` form |
 | `--hub-endpoint` | disabled | Hub IP and optional base port for hub-and-spoke routing |
+| `--subscribe-all-ports` | off | Subscribe a peer learned on any port to every configured port |
 | `--peer-timeout` | `1m` | Inactivity period before a peer expires |
 | `--max-peers-per-port` | `256` | Maximum active peers per logical port |
 | `--udp4-address` | `0.0.0.0` | IPv4 listening address |
@@ -218,4 +222,4 @@ GOTOOLCHAIN=auto make test-race
 GOTOOLCHAIN=auto make build
 ```
 
-The repository is mounted at the same absolute path in the guest. Alpine's packaged Go toolchain may default to `GOTOOLCHAIN=local`; `GOTOOLCHAIN=auto` selects and caches the Go 1.26.5 toolchain required by the module. Do not recreate an existing sandbox merely to update tools; install missing packages with Alpine's package manager.
+The repository is mounted at the same absolute path in the guest. Alpine's packaged Go toolchain may default to `GOTOOLCHAIN=local`; `GOTOOLCHAIN=auto` selects and caches the Go 1.27.3 toolchain required by the module. Do not recreate an existing sandbox merely to update tools; install missing packages with Alpine's package manager.

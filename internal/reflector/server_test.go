@@ -134,6 +134,83 @@ func TestServerKeepsPortsIsolated(t *testing.T) {
 	assertNoPacket(t, firstPortClient)
 }
 
+func TestServerSubscribesPeerToAllPorts(t *testing.T) {
+	portStart := availableConsecutiveDualStackPorts(t)
+	settings := testSettings(portStart, portStart+1, 4)
+	settings.SubscribeAllPorts = true
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	cancel, result := runTestServer(server)
+	defer stopTestServer(t, cancel, result)
+
+	first := listenClient(t, "udp4", "127.0.0.1")
+	defer first.Close()
+	second := listenClient(t, "udp4", "127.0.0.1")
+	defer second.Close()
+
+	writePacket(t, first, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart)), []byte("register on first port"))
+	payload := []byte("send on second port")
+	writePacket(t, second, netip.MustParseAddrPort("127.0.0.1:"+portString(portStart+1)), payload)
+	if received := readPacket(t, first); !bytes.Equal(received, payload) {
+		t.Fatalf("first peer received %q, want %q", received, payload)
+	}
+}
+
+func TestServerRejectsCrossPortSubscriptionAtomicallyAtCapacity(t *testing.T) {
+	portStart := availableConsecutiveDualStackPorts(t)
+	settings := testSettings(portStart, portStart+1, 1)
+	settings.SubscribeAllPorts = true
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	t.Cleanup(server.closeListeners)
+
+	now := time.Now()
+	server.relays[1].registry.admit(netip.MustParseAddrPort("192.0.2.1:1000"), now)
+	sender := netip.MustParseAddrPort("192.0.2.2:2000")
+	admissions := server.admitPeer(server.relays[0], sender, now)
+
+	for _, result := range admissions {
+		if result.admission.accepted {
+			t.Fatalf("port %d accepted peer despite full cross-port subscription", result.relay.port)
+		}
+		snapshot, _ := result.relay.registry.snapshot(now)
+		for _, peer := range snapshot {
+			if peer.endpoint == sender {
+				t.Fatalf("port %d contains peer after atomic rejection", result.relay.port)
+			}
+		}
+	}
+}
+
+func TestServerClassifiesCrossSubscribedHubPerPort(t *testing.T) {
+	portBlock := availableConsecutiveDualStackPortBlock(t, 4)
+	settings := testSettings(portBlock, portBlock+1, 4)
+	settings.HubEndpoint = netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), portBlock+2)
+	settings.SubscribeAllPorts = true
+	server, err := NewServer(settings, observability.NewMetrics(), discardLogger())
+	if err != nil {
+		t.Fatalf("NewServer(): %v", err)
+	}
+	t.Cleanup(server.closeListeners)
+
+	sender := settings.HubEndpoint
+	admissions := server.admitPeer(server.relays[0], sender, time.Now())
+
+	if !admissions[0].admission.accepted || !admissions[1].admission.accepted {
+		t.Fatal("mapped hub endpoint was not subscribed to every port")
+	}
+	if !server.relays[0].registry.isHubPeer(sender) {
+		t.Fatal("sender is not classified as the hub on its mapped port")
+	}
+	if server.relays[1].registry.isHubPeer(sender) {
+		t.Fatal("sender is classified as the hub on a differently mapped port")
+	}
+}
+
 func TestServerListsReflectorPeersByPortAndEndpoint(t *testing.T) {
 	portStart := availableConsecutiveDualStackPorts(t)
 	server := newTestServer(t, portStart, portStart+1, 4)

@@ -10,6 +10,7 @@ func TestParseValidConfiguration(t *testing.T) {
 	configuration, err := Parse([]string{
 		"--port-range=40000-40010",
 		"--hub-endpoint=192.0.2.1:30000",
+		"--subscribe-all-ports",
 		"--peer-timeout=30s",
 		"--max-peers-per-port=64",
 		"--udp4-address=127.0.0.1",
@@ -25,6 +26,9 @@ func TestParseValidConfiguration(t *testing.T) {
 	}
 	if configuration.HubEndpoint != netip.MustParseAddrPort("192.0.2.1:30000") {
 		t.Fatalf("unexpected hub endpoint: %s", configuration.HubEndpoint)
+	}
+	if !configuration.SubscribeAllPorts {
+		t.Fatal("SubscribeAllPorts = false, want true")
 	}
 	if configuration.PeerTimeout != 30*time.Second {
 		t.Fatalf("unexpected peer timeout: %s", configuration.PeerTimeout)
@@ -60,6 +64,9 @@ func TestParseDefaults(t *testing.T) {
 	}
 	if configuration.HubEndpoint.IsValid() {
 		t.Errorf("HubEndpoint = %s, want hub mode disabled", configuration.HubEndpoint)
+	}
+	if configuration.SubscribeAllPorts {
+		t.Error("SubscribeAllPorts = true, want disabled")
 	}
 }
 

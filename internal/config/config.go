@@ -25,23 +25,25 @@ type PortRange struct {
 }
 
 type Config struct {
-	PortRange       PortRange
-	HubEndpoint     netip.AddrPort
-	PeerTimeout     time.Duration
-	MaxPeersPerPort int
-	UDP4Address     netip.Addr
-	UDP6Address     netip.Addr
-	HTTPAddress     string
+	PortRange         PortRange
+	HubEndpoint       netip.AddrPort
+	SubscribeAllPorts bool
+	PeerTimeout       time.Duration
+	MaxPeersPerPort   int
+	UDP4Address       netip.Addr
+	UDP6Address       netip.Addr
+	HTTPAddress       string
 }
 
 type rawConfig struct {
-	portRange       string
-	hubEndpoint     string
-	peerTimeout     time.Duration
-	maxPeersPerPort int
-	udp4Address     string
-	udp6Address     string
-	httpAddress     string
+	portRange         string
+	hubEndpoint       string
+	subscribeAllPorts bool
+	peerTimeout       time.Duration
+	maxPeersPerPort   int
+	udp4Address       string
+	udp6Address       string
+	httpAddress       string
 }
 
 func newFlagSet(output io.Writer) (*flag.FlagSet, *rawConfig) {
@@ -51,6 +53,7 @@ func newFlagSet(output io.Writer) (*flag.FlagSet, *rawConfig) {
 
 	flags.StringVar(&raw.portRange, "port-range", "", "inclusive UDP port range (START-END)")
 	flags.StringVar(&raw.hubEndpoint, "hub-endpoint", "", "hub IP and optional base port")
+	flags.BoolVar(&raw.subscribeAllPorts, "subscribe-all-ports", false, "subscribe a peer to every configured UDP port")
 	flags.DurationVar(&raw.peerTimeout, "peer-timeout", defaultPeerTimeout, "peer inactivity timeout")
 	flags.IntVar(&raw.maxPeersPerPort, "max-peers-per-port", defaultMaxPeers, "maximum active peers per logical port")
 	flags.StringVar(&raw.udp4Address, "udp4-address", defaultUDP4Address, "IPv4 address to listen on")
@@ -122,13 +125,14 @@ func Parse(args []string) (Config, error) {
 	}
 
 	return Config{
-		PortRange:       portRange,
-		HubEndpoint:     hubEndpoint,
-		PeerTimeout:     raw.peerTimeout,
-		MaxPeersPerPort: raw.maxPeersPerPort,
-		UDP4Address:     udp4Address,
-		UDP6Address:     udp6Address,
-		HTTPAddress:     raw.httpAddress,
+		PortRange:         portRange,
+		HubEndpoint:       hubEndpoint,
+		SubscribeAllPorts: raw.subscribeAllPorts,
+		PeerTimeout:       raw.peerTimeout,
+		MaxPeersPerPort:   raw.maxPeersPerPort,
+		UDP4Address:       udp4Address,
+		UDP6Address:       udp6Address,
+		HTTPAddress:       raw.httpAddress,
 	}, nil
 }
 

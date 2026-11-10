@@ -37,11 +37,12 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 			Start: configuration.PortRange.Start,
 			End:   configuration.PortRange.End,
 		},
-		HubEndpoint:     configuration.HubEndpoint,
-		PeerTimeout:     configuration.PeerTimeout,
-		MaxPeersPerPort: configuration.MaxPeersPerPort,
-		UDP4Address:     configuration.UDP4Address,
-		UDP6Address:     configuration.UDP6Address,
+		HubEndpoint:       configuration.HubEndpoint,
+		SubscribeAllPorts: configuration.SubscribeAllPorts,
+		PeerTimeout:       configuration.PeerTimeout,
+		MaxPeersPerPort:   configuration.MaxPeersPerPort,
+		UDP4Address:       configuration.UDP4Address,
+		UDP6Address:       configuration.UDP6Address,
 	}, metrics, logger)
 	if err != nil {
 		if httpListener != nil {
@@ -88,6 +89,7 @@ func Run(ctx context.Context, configuration config.Config, logger *slog.Logger) 
 	logger.Info("UDP reflector started",
 		"port_range", fmt.Sprintf("%d-%d", configuration.PortRange.Start, configuration.PortRange.End),
 		"hub_endpoint", hubEndpoint,
+		"subscribe_all_ports", configuration.SubscribeAllPorts,
 		"peer_timeout", configuration.PeerTimeout,
 		"max_peers_per_port", configuration.MaxPeersPerPort,
 		"udp4_address", configuration.UDP4Address,

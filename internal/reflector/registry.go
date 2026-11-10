@@ -27,6 +27,12 @@ type admission struct {
 	active     int
 }
 
+type admissionCheck struct {
+	accepted bool
+	expired  []netip.AddrPort
+	active   int
+}
+
 type peerSnapshot struct {
 	endpoint netip.AddrPort
 	lastSeen time.Time
@@ -118,6 +124,17 @@ func (registry *peerRegistry) admit(sender netip.AddrPort, now time.Time) admiss
 		expired:    expired,
 		active:     len(registry.peers),
 	}
+}
+
+func (registry *peerRegistry) checkAdmission(sender netip.AddrPort, now time.Time) admissionCheck {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+
+	sender = canonicalAddrPort(sender)
+	expired := registry.pruneLocked(now)
+	_, known := registry.peers[sender]
+	accepted := known || registry.hasStaticHub() && sender == registry.hubEndpoint || !registry.atCapacity(sender)
+	return admissionCheck{accepted: accepted, expired: expired, active: len(registry.peers)}
 }
 
 func (registry *peerRegistry) hasStaticHub() bool {
